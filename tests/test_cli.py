@@ -82,7 +82,7 @@ class TestCLI:
         assert "Stanford University" in output
         assert "Time, Clocks" in output
         assert "14000" in output
-        assert "VERIFIED AFFILIATION" in output
+        assert "AFFILIATION MATCHED IN METADATA" in output
         assert "https://doi.org/10.1145/359545.359563" in output
 
     def test_main_missing_command_returns_error(self, capsys: pytest.CaptureFixture[str]) -> None:

@@ -1,6 +1,6 @@
 """Crawler and faculty directory parsing package."""
 
-from artemis.crawler.client import PoliteHttpClient
+from artemis.crawler.client import PoliteHttpClient, get_default_user_agent
 from artemis.crawler.exceptions import (
     CrawlError,
     HttpError,
@@ -18,4 +18,5 @@ __all__ = [
     "PoliteHttpClient",
     "RateLimitExceededError",
     "UnsupportedPageError",
+    "get_default_user_agent",
 ]

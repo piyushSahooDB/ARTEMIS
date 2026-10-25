@@ -17,8 +17,13 @@ class VerificationStatus(str, Enum):
     """Status indicating how trustworthy a field or entity record is.
 
     - VERIFIED: Directly confirmed from an official or authoritative source.
-    - UNVERIFIED: Extracted or scraped but not yet verified against ground truth.
-    - INFERRED: Synthesized or derived via heuristic or pattern match.
+      * For email: Extracted directly from an official university directory or profile page.
+        Does NOT confirm SMTP deliverability or active mailbox status.
+      * For publication author match: Author institutional affiliation was explicitly matched
+        in publication bibliographic metadata (OpenAlex, arXiv, Crossref). Does NOT constitute
+        biometric or infallible identity verification.
+    - UNVERIFIED: Extracted or scraped but not yet confirmed against official/institutional metadata.
+    - INFERRED: Synthesized or derived via heuristic, rule, or pattern match.
     - DISPUTED: Found conflicting information across different sources.
     """
 

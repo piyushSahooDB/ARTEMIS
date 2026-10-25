@@ -101,3 +101,15 @@ class TestArtemisScoutingService:
                 paper_titles = [p.title for p in linked_papers]
                 assert "The Part-Time Parliament (Paxos)" in paper_titles
                 assert "Specifying Systems with TLA+" in paper_titles
+
+                # Test idempotency: re-running scouting must not create duplicate records
+                service.scout(
+                    directory_url="https://cs.stanford.edu/faculty",
+                    keywords=["distributed", "paxos"],
+                    max_faculty=2,
+                    max_papers_per_faculty=2,
+                    persist=True,
+                )
+                assert len(repo.list_professors()) == 1
+                assert len(repo.list_papers()) == 2
+                assert len(repo.get_papers_by_professor(prof.id)) == 2

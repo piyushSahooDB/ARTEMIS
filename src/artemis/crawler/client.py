@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Mapping
 from urllib.parse import urlparse
@@ -10,10 +11,19 @@ import httpx
 
 from artemis.crawler.exceptions import HttpError, RateLimitExceededError
 
-DEFAULT_USER_AGENT = (
-    "ARTEMIS-AcademicScout/0.2.0 "
-    "(+https://github.com/artemis-agent; mailto:artemis-scout@example.edu; polite academic crawler)"
-)
+
+def get_default_user_agent() -> str:
+    """Return configured or standard User-Agent header for polite academic requests."""
+    custom = os.getenv("ARTEMIS_USER_AGENT")
+    if custom and custom.strip():
+        return custom.strip()
+
+    email = os.getenv("ARTEMIS_CONTACT_EMAIL", "").strip()
+    contact = f"; mailto:{email}" if email else ""
+    return (
+        f"ARTEMIS-AcademicScout/0.2.0 "
+        f"(+https://github.com/piyushSahooDB/ARTEMIS{contact}; polite student research assistant)"
+    )
 
 
 class PoliteHttpClient:
@@ -21,19 +31,19 @@ class PoliteHttpClient:
 
     - Enforces request timeouts.
     - Tracks per-host request intervals to prevent overloading university servers.
-    - Identifies itself with a descriptive academic User-Agent.
+    - Identifies itself with a configurable, accurate academic User-Agent.
     - Handles HTTP 429 Too Many Requests and Retry-After headers politely.
     """
 
     def __init__(
         self,
-        user_agent: str = DEFAULT_USER_AGENT,
+        user_agent: str | None = None,
         timeout: float = 10.0,
         min_host_interval: float = 0.5,
         max_retries: int = 2,
         client: httpx.Client | None = None,
     ) -> None:
-        self.user_agent = user_agent
+        self.user_agent = user_agent or get_default_user_agent()
         self.timeout = timeout
         self.min_host_interval = min_host_interval
         self.max_retries = max_retries

@@ -377,3 +377,52 @@ class TestForeignKeysAndCascades:
 
         # The paper itself is an independent publication and should still exist
         assert repo.get_paper(sample_paper.id) is not None
+
+
+class TestRepositoryLookups:
+    def test_find_professor_by_email_and_name(
+        self,
+        repo: ArtemisRepository,
+        sample_professor: Professor,
+    ) -> None:
+        repo.create_professor(sample_professor)
+
+        by_email = repo.find_professor_by_email(sample_professor.email)
+        assert by_email is not None
+        assert by_email.id == sample_professor.id
+
+        by_name = repo.find_professor_by_name(sample_professor.name, sample_professor.institution)
+        assert by_name is not None
+        assert by_name.id == sample_professor.id
+
+        # Case-insensitive checks
+        assert repo.find_professor_by_email(sample_professor.email.upper()) is not None
+        assert repo.find_professor_by_name(sample_professor.name.lower(), sample_professor.institution.upper()) is not None
+
+        # Nonexistent
+        assert repo.find_professor_by_email("nobody@nowhere.edu") is None
+        assert repo.find_professor_by_name("Unknown Person", "Unknown Inst") is None
+
+    def test_find_paper_by_identifiers(
+        self,
+        repo: ArtemisRepository,
+        sample_paper: Paper,
+    ) -> None:
+        repo.create_paper(sample_paper)
+
+        by_doi = repo.find_paper_by_doi(sample_paper.doi)
+        assert by_doi is not None
+        assert by_doi.id == sample_paper.id
+
+        by_arxiv = repo.find_paper_by_arxiv_id(sample_paper.arxiv_id)
+        assert by_arxiv is not None
+        assert by_arxiv.id == sample_paper.id
+
+        by_title = repo.find_paper_by_title(sample_paper.title)
+        assert by_title is not None
+        assert by_title.id == sample_paper.id
+
+        # Nonexistent
+        assert repo.find_paper_by_doi("10.9999/nonexistent") is None
+        assert repo.find_paper_by_arxiv_id("9999.99999") is None
+        assert repo.find_paper_by_title("Nonexistent Paper Title") is None

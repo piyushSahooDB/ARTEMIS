@@ -48,6 +48,12 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
         help="Maximum number of publications per professor (default: 3)",
     )
     scout_parser.add_argument(
+        "-i", "--institution",
+        dest="institution",
+        default=None,
+        help="Target university or institute name override (e.g. 'Indian Institute of Technology Delhi')",
+    )
+    scout_parser.add_argument(
         "--db",
         default="artemis.db",
         help="Path to SQLite database file for persistence (default: artemis.db)",
@@ -99,7 +105,8 @@ def format_table(results: list[FacultyScoutResult]) -> str:
         if prof.department:
             lines.append(f"  Department:         {prof.department}")
         if prof.email:
-            lines.append(f"  Email:              {prof.email} [{prof.email_status.value}]")
+            email_label = "listed on official page; deliverability unverified" if prof.email_status.value == "verified" else "unverified"
+            lines.append(f"  Email:              {prof.email} [{email_label}]")
         else:
             lines.append("  Email:              [Not publicly listed on directory / unverified]")
 
@@ -143,7 +150,7 @@ def format_table(results: list[FacultyScoutResult]) -> str:
                     lines.append(f"       Identifier:     {ident_str.strip()}")
 
                 # Match & Verification Evidence
-                match_tag = "VERIFIED AFFILIATION" if sp.author_match.is_institution_matched else "UNCERTAIN (Name-Only Match)"
+                match_tag = "AFFILIATION MATCHED IN METADATA" if sp.author_match.is_institution_matched else "UNCERTAIN (Name-Only Match)"
                 lines.append(
                     f"       Scores:         Composite Relevance: {sp.composite_relevance:.2f} "
                     f"(Topic: {sp.relevance_score:.2f}, Recency: {sp.recency_score:.2f}) | "
@@ -195,6 +202,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 keywords=args.keywords,
                 max_faculty=args.max_faculty,
                 max_papers_per_faculty=args.max_papers,
+                institution=args.institution,
                 persist=not args.no_persist,
             )
 

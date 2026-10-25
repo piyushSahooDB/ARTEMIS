@@ -9,14 +9,24 @@ from artemis.models.paper import Paper
 
 
 class AuthorMatch(BaseModel):
-    """Author identity verification and institutional affiliation evidence."""
+    """Author identity verification and institutional affiliation evidence.
+
+    Distinguishes an institutional affiliation match found in publication metadata
+    from ground-truth identity verification. A confidence score of 1.0 represents full
+    metadata affiliation confirmation, not biometric or infallible identity proof.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     author_name: str
     affiliations: list[str] = Field(default_factory=list)
     is_institution_matched: bool = False
-    confidence: float = Field(default=0.4, ge=0.0, le=1.0)
+    confidence: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score based on metadata match. 1.0 indicates full institutional affiliation match in bibliographic metadata; 0.4 indicates name-only match without affiliation confirmation.",
+    )
     status: VerificationStatus = Field(default=VerificationStatus.UNVERIFIED)
     notes: str = Field(default="Name-only match; institutional affiliation not verified in metadata.")
 

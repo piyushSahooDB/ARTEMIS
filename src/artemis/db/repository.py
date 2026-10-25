@@ -87,6 +87,25 @@ class ArtemisRepository:
             return None
         return self._row_to_professor(row)
 
+    def find_professor_by_email(self, email: str) -> Optional[Professor]:
+        """Find a professor by official contact email address."""
+        if not email:
+            return None
+        cursor = self.conn.execute(
+            "SELECT * FROM professors WHERE LOWER(email) = LOWER(?)", (email.strip(),)
+        )
+        row = cursor.fetchone()
+        return self._row_to_professor(row) if row else None
+
+    def find_professor_by_name(self, name: str, institution: str) -> Optional[Professor]:
+        """Find a professor by full name and institution."""
+        cursor = self.conn.execute(
+            "SELECT * FROM professors WHERE LOWER(name) = LOWER(?) AND LOWER(institution) = LOWER(?)",
+            (name.strip(), institution.strip()),
+        )
+        row = cursor.fetchone()
+        return self._row_to_professor(row) if row else None
+
     def update_professor(self, prof: Professor) -> Professor:
         """Update an existing professor record."""
         prof.updated_at = utc_now()
@@ -223,6 +242,37 @@ class ArtemisRepository:
         if not row:
             return None
         return self._row_to_paper(row)
+
+    def find_paper_by_doi(self, doi: str) -> Optional[Paper]:
+        """Find a paper by its DOI."""
+        if not doi:
+            return None
+        clean = doi.lower().replace("https://doi.org/", "").strip()
+        cursor = self.conn.execute(
+            "SELECT * FROM papers WHERE LOWER(doi) = LOWER(?)", (clean,)
+        )
+        row = cursor.fetchone()
+        return self._row_to_paper(row) if row else None
+
+    def find_paper_by_arxiv_id(self, arxiv_id: str) -> Optional[Paper]:
+        """Find a paper by its arXiv ID."""
+        if not arxiv_id:
+            return None
+        cursor = self.conn.execute(
+            "SELECT * FROM papers WHERE LOWER(arxiv_id) = LOWER(?)", (arxiv_id.strip(),)
+        )
+        row = cursor.fetchone()
+        return self._row_to_paper(row) if row else None
+
+    def find_paper_by_title(self, title: str) -> Optional[Paper]:
+        """Find a paper by normalized title."""
+        if not title:
+            return None
+        cursor = self.conn.execute(
+            "SELECT * FROM papers WHERE LOWER(TRIM(title)) = LOWER(TRIM(?))", (title,)
+        )
+        row = cursor.fetchone()
+        return self._row_to_paper(row) if row else None
 
     def update_paper(self, paper: Paper) -> Paper:
         """Update an existing paper record."""

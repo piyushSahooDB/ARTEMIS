@@ -79,6 +79,7 @@ class ArtemisScoutingService:
         keywords: Sequence[str] | None = None,
         max_faculty: int = 5,
         max_papers_per_faculty: int = 3,
+        institution: str | None = None,
         persist: bool = True,
     ) -> list[FacultyScoutResult]:
         """Scout a faculty directory URL and find top matching research publications."""
@@ -90,6 +91,7 @@ class ArtemisScoutingService:
             research_keywords=kw_list,
             max_faculty=max_faculty,
             max_profile_depth=max_faculty,
+            institution_name=institution,
         )
 
         results: list[FacultyScoutResult] = []
@@ -176,19 +178,40 @@ class ArtemisScoutingService:
         professor: Professor,
         papers: Sequence[Paper],
     ) -> None:
-        """Persist professor and associated papers in SQLite repository."""
-        # Upsert professor: check if already exists by id
-        existing = repo.get_professor(professor.id)
-        if not existing:
-            repo.create_professor(professor)
-        else:
+        """Persist professor and associated papers in SQLite repository with deduplication."""
+        # 1. Check if professor already exists (by email or name + institution)
+        existing_prof = None
+        if professor.email:
+            existing_prof = repo.find_professor_by_email(professor.email)
+        if not existing_prof:
+            existing_prof = repo.find_professor_by_name(professor.name, professor.institution)
+
+        if existing_prof:
+            professor.id = existing_prof.id
+            professor.created_at = existing_prof.created_at
             repo.update_professor(professor)
+            prof_id = existing_prof.id
+        else:
+            repo.create_professor(professor)
+            prof_id = professor.id
 
+        # 2. Check papers and link
         for paper in papers:
-            existing_paper = repo.get_paper(paper.id)
-            if not existing_paper:
-                repo.create_paper(paper)
-            else:
-                repo.update_paper(paper)
+            existing_paper = None
+            if paper.doi:
+                existing_paper = repo.find_paper_by_doi(paper.doi)
+            if not existing_paper and paper.arxiv_id:
+                existing_paper = repo.find_paper_by_arxiv_id(paper.arxiv_id)
+            if not existing_paper and paper.title:
+                existing_paper = repo.find_paper_by_title(paper.title)
 
-            repo.link_professor_paper(professor.id, paper.id, relationship_type="author")
+            if existing_paper:
+                paper.id = existing_paper.id
+                paper.created_at = existing_paper.created_at
+                repo.update_paper(paper)
+                paper_id = existing_paper.id
+            else:
+                repo.create_paper(paper)
+                paper_id = paper.id
+
+            repo.link_professor_paper(prof_id, paper_id, relationship_type="author")

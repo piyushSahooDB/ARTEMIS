@@ -41,7 +41,10 @@ class Professor(BaseModel):
     )
     email_status: VerificationStatus = Field(
         default=VerificationStatus.UNVERIFIED,
-        description="Verification state of the email address.",
+        description=(
+            "Verification state of the email address. VERIFIED indicates the email was directly published "
+            "on an official faculty directory or profile page; it does NOT confirm SMTP deliverability."
+        ),
     )
     profile_url: Optional[str] = Field(
         default=None,

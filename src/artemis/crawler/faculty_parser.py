@@ -56,20 +56,75 @@ def clean_title(raw_title: str | None) -> str | None:
     return cleaned or None
 
 
+KNOWN_INSTITUTION_DOMAINS: dict[str, str] = {
+    "iitd": "Indian Institute of Technology Delhi",
+    "iitm": "Indian Institute of Technology Madras",
+    "iitb": "Indian Institute of Technology Bombay",
+    "iitk": "Indian Institute of Technology Kanpur",
+    "iitkgp": "Indian Institute of Technology Kharagpur",
+    "iitr": "Indian Institute of Technology Roorkee",
+    "iitg": "Indian Institute of Technology Guwahati",
+    "iith": "Indian Institute of Technology Hyderabad",
+    "iiti": "Indian Institute of Technology Indore",
+    "iitbhu": "IIT BHU Varanasi",
+    "iisc": "Indian Institute of Science",
+    "iiitd": "Indraprastha Institute of Information Technology Delhi",
+    "iiith": "IIIT Hyderabad",
+    "iiitb": "IIIT Bangalore",
+    "tifr": "Tata Institute of Fundamental Research",
+    "cmi": "Chennai Mathematical Institute",
+    "isi": "Indian Statistical Institute",
+    "bits-pilani": "BITS Pilani",
+    "nitt": "National Institute of Technology Tiruchirappalli",
+    "nitk": "National Institute of Technology Karnataka",
+    "nitw": "National Institute of Technology Warangal",
+    "stanford": "Stanford University",
+    "mit": "Massachusetts Institute of Technology",
+    "cmu": "Carnegie Mellon University",
+    "berkeley": "UC Berkeley",
+    "harvard": "Harvard University",
+    "ox": "University of Oxford",
+    "cam": "University of Cambridge",
+}
+
+
 def infer_institution(soup: BeautifulSoup, url: str) -> str:
-    """Infer institution name from page title, meta tags, or domain hostname."""
+    """Infer institution name from domain hostname, page title, or meta tags."""
+    # 1. Authoritative check via domain hostname and known institution codes
+    domain = urlparse(url).netloc.lower()
+    domain_parts = domain.split(".")
+    for part in domain_parts:
+        if part in KNOWN_INSTITUTION_DOMAINS:
+            return KNOWN_INSTITUTION_DOMAINS[part]
+
+    # 2. Check title tag for clean institution names
     title_tag = soup.find("title")
     if title_tag and title_tag.string:
         title = title_tag.string.strip()
         parts = [p.strip() for p in re.split(r"[|\-–—]", title) if p.strip()]
         for part in reversed(parts):
             if any(term in part.lower() for term in ("university", "institute", "college", "school")):
-                return part
+                if len(part) <= 60:
+                    return part
 
-    domain = urlparse(url).netloc
-    parts = domain.split(".")
-    if len(parts) >= 2:
-        return parts[-2].capitalize() + (" University" if "edu" in parts or "ac" in parts else "")
+    # 3. Check header/brand for specific, strict institutional phrases
+    for tag in soup.find_all(["header", "nav", "div"], class_=re.compile(r"header|brand|navbar|logo", re.I)):
+        text = tag.get_text(separator=" ", strip=True)
+        m = re.search(r"\b(Indian Institute of Technology\s+[A-Z][a-z]+|National Institute of Technology\s+[A-Z][a-z]+)\b", text)
+        if m:
+            return m.group(1).strip()
+
+    # 4. Fallback: filter out common academic TLDs, SLDs, and subdomains
+    filtered = [
+        p for p in domain_parts
+        if p not in (
+            "www", "homecse", "cse", "cs", "dept", "department", "faculty", "staff",
+            "ac", "edu", "ernet", "gov", "res", "in", "uk", "au", "com", "org", "net"
+        )
+    ]
+    if filtered:
+        return filtered[-1].capitalize() + " University"
+
     return "Unknown Institution"
 
 
@@ -97,6 +152,11 @@ def detect_spa_indicators(soup: BeautifulSoup) -> bool:
             scripts = soup.find_all("script")
             if len(scripts) >= 2:
                 return True
+
+    # Check for Angular / custom component root tags (e.g. <app-root>, <app-main>)
+    for app_tag in soup.find_all(lambda tag: tag.name and (tag.name.startswith("app-") or tag.name in ("app", "root"))):
+        if len(app_tag.get_text(strip=True)) < 50:
+            return True
 
     # 3. Check for pages with almost no textual content but client-side bundles
     body = soup.find("body")
@@ -167,9 +227,11 @@ class FacultyDirectoryParser:
 
         # Strategy 1: Look for common faculty cards / person containers
         card_selectors = [
+            "div.single-team-area", "div.fac-card", "div.team-grid",
             "div.faculty-member", "div.faculty-card", "div.person", "div.directory-item",
             "div.profile-card", "div.views-row", "article.person", "article.faculty",
-            "li.faculty-member", "li.person", "div.card", "div.col-md-4", "div.col-sm-6"
+            "li.faculty-member", "li.person", "div.team-member", "div.team-item", "div.card",
+            "div.col-md-4", "div.col-sm-6"
         ]
 
         found_nodes: list[Tag] = []
@@ -208,16 +270,20 @@ class FacultyDirectoryParser:
         link = node.find("a", href=True)
         name_tag = node.find(["h2", "h3", "h4", "h5", "strong", "b"])
 
-        raw_name: str | None = None
+        raw_name: str | None = node.get("data-name")
         profile_url: str | None = None
+        if node.get("data-profile-link"):
+            profile_url = urljoin(base_url, node.get("data-profile-link"))
 
-        if link and link.get_text(strip=True):
-            link_text = link.get_text(strip=True)
-            if not any(ign in link_text.lower() for ign in ("read more", "view profile", "website", "profile")):
-                raw_name = link_text
-                profile_url = urljoin(base_url, link["href"])
-        elif name_tag:
-            raw_name = name_tag.get_text(strip=True)
+        if not raw_name:
+            if link and link.get_text(strip=True):
+                link_text = link.get_text(strip=True)
+                if not any(ign in link_text.lower() for ign in ("read more", "view profile", "website", "profile")):
+                    raw_name = link_text
+                    if not profile_url:
+                        profile_url = urljoin(base_url, link["href"])
+            elif name_tag:
+                raw_name = name_tag.get_text(strip=True)
 
         if not raw_name:
             return None
@@ -234,16 +300,20 @@ class FacultyDirectoryParser:
 
         # Extract title
         title: str | None = None
-        title_tag = node.find(class_=re.compile(r"title|position|role|designation|rank", re.I))
-        if title_tag:
-            title_text = title_tag.get_text(strip=True)
-            for pat in TITLE_PATTERNS:
-                m = pat.search(title_text)
-                if m:
-                    title = m.group(0).strip()
-                    break
-            if not title and len(title_text) <= 80:
-                title = title_text
+        if node.get("data-designation"):
+            title = clean_title(node.get("data-designation"))
+
+        if not title:
+            title_tag = node.find(class_=re.compile(r"title|position|role|designation|rank", re.I))
+            if title_tag:
+                title_text = title_tag.get_text(strip=True)
+                for pat in TITLE_PATTERNS:
+                    m = pat.search(title_text)
+                    if m:
+                        title = m.group(0).strip()
+                        break
+                if not title and len(title_text) <= 80:
+                    title = title_text
 
         if not title:
             for pat in TITLE_PATTERNS:
@@ -256,22 +326,45 @@ class FacultyDirectoryParser:
 
         # Extract email
         email: str | None = None
-        mailto = node.find("a", href=re.compile(r"^mailto:", re.IGNORECASE))
-        if mailto and mailto.get("href"):
-            raw_email = mailto["href"].split(":", 1)[1].split("?")[0].strip()
-            if EMAIL_REGEX.match(raw_email):
-                email = raw_email
+        raw_mail = node.get("data-mail")
+        if raw_mail:
+            deobf = re.sub(r"\[at\]|\(at\)", "@", raw_mail)
+            deobf = re.sub(r"\[dot\]|\(dot\)", ".", deobf).strip()
+            if EMAIL_REGEX.match(deobf):
+                email = deobf
+
+        if not email:
+            mailto = node.find("a", href=re.compile(r"^mailto:", re.IGNORECASE))
+            if mailto and mailto.get("href"):
+                raw_email = mailto["href"].split(":", 1)[1].split("?")[0].strip()
+                if EMAIL_REGEX.match(raw_email):
+                    email = raw_email
         if not email:
             em_match = EMAIL_REGEX.search(text_content)
             if em_match:
                 email = em_match.group(0)
 
         # Extract research interests
-        interests: list[str] = self._extract_interests_from_text(text_content)
+        interests: list[str] = []
+        data_res = node.get("data-resrch") or node.get("data-researchareas")
+        if data_res:
+            raw_items = re.split(r"[,;•|]", data_res)
+            interests = [item.strip() for item in raw_items if item.strip() and len(item.strip()) <= 60]
+
+        if not interests:
+            interests = self._extract_interests_from_text(text_content)
+
+        if not interests:
+            bio_node = node.find(class_=re.compile(r"bio|research|interests|areas", re.I))
+            if bio_node:
+                bio_text = bio_node.get_text(separator=" ", strip=True)
+                interests = self._extract_interests_from_text(bio_text)
+                if not interests and len(bio_text) < 120:
+                    interests = [i.strip() for i in re.split(r"[,;•\n]", bio_text) if i.strip() and len(i.strip()) <= 60]
 
         # Lab URL or Scholar URL if already present on card
         scholar_url: str | None = None
-        lab_url: str | None = None
+        lab_url: str | None = node.get("data-personallink")
 
         for a_tag in node.find_all("a", href=True):
             href = a_tag["href"]
