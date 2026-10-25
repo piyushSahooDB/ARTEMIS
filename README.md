@@ -20,32 +20,64 @@ A local-first Python agent that empowers university students to scout prospectiv
 ARTEMIS/
 ├── .env.example              # Environment configuration template
 ├── .gitignore                # Exclusion rules for local DBs, venvs, and secrets
-├── pyproject.toml            # PEP 517/621 package metadata and pytest config
+├── pyproject.toml            # PEP 517/621 package metadata, dependencies (pypdf, etc.)
 ├── README.md                 # Project documentation and quickstart guide
+├── HANDOFF.md                # Verification findings, edge cases, and handoff report
 ├── src/
 │   └── artemis/
 │       ├── __init__.py
+│       ├── cli.py            # CLI commands (scout, ingest-resume, brief, draft, match)
+│       ├── service.py        # ArtemisScoutingService orchestration
 │       ├── models/           # Pydantic v2 domain schemas with validation & provenance
 │       │   ├── __init__.py
 │       │   ├── common.py     # VerificationStatus enum and SourceProvenance model
 │       │   ├── professor.py  # Professor entity with email validation and URLs
 │       │   ├── paper.py      # Research Paper entity (DOI, arXiv, OpenAlex)
-│       │   ├── resume.py     # ResumeEvidence entity categorizing student achievements
-│       │   ├── brief.py      # ResearchBrief linking paper findings to student skills
-│       │   └── email.py      # EmailDraft entity with status lifecycle and audit trail
+│       │   ├── resume.py     # ResumeEvidence entity with raw_snippet & UNVERIFIED state
+│       │   ├── brief.py      # ResearchBrief with limitations, gaps, and open questions
+│       │   └── email.py      # EmailDraft entity with draft_pending status & audit trail
 │       ├── db/               # SQLite persistence layer
 │       │   ├── __init__.py
 │       │   ├── connection.py # Connection factory (foreign keys, WAL mode, Row factory)
-│       │   ├── schema.py     # Relational tables, indexes, and migrations
+│       │   ├── schema.py     # Relational tables, indexes, and schema migrations
 │       │   └── repository.py # ArtemisRepository providing full CRUD and relations
+│       ├── crawler/          # Polite web crawler and university directory parser
+│       │   ├── __init__.py
+│       │   ├── client.py     # PoliteHttpClient with per-domain rate limiting
+│       │   └── faculty_parser.py # Static HTML & specialized university DOM parsers
+│       ├── scouting/         # Bibliographic academic discovery & paper ranking
+│       │   ├── __init__.py
+│       │   ├── clients.py    # OpenAlex, arXiv, and Crossref API clients
+│       │   └── ranker.py     # Paper ranker and author affiliation disambiguation
+│       ├── resume/           # Student résumé ingestion engine
+│       │   ├── __init__.py
+│       │   └── extractor.py  # PDF, TXT, MD parser extracting structured ResumeEvidence
+│       ├── llm/              # Replaceable LLM interface
+│       │   ├── __init__.py
+│       │   └── provider.py   # LLMProvider, MockLLMProvider, and GeminiLLMProvider
+│       ├── brief/            # Research brief synthesis
+│       │   ├── __init__.py
+│       │   └── synthesizer.py# Grounded synthesis with abstract labeling & guardrails
+│       ├── email/            # Outreach email drafting
+│       │   ├── __init__.py
+│       │   └── generator.py  # Review-only cold draft generator with safety audits
 │       └── utils/
 │           ├── __init__.py
 │           └── ids.py        # Prefixed human-readable unique ID generator
-├── tests/                    # Complete pytest suite
-│   ├── __init__.py
-│   ├── conftest.py           # Shared fixtures (in-memory DB, sample models)
+├── tests/                    # Complete pytest suite (106 unit & integration tests)
+│   ├── conftest.py           # Shared fixtures (in-memory DB, sample models, fixtures)
 │   ├── test_models.py        # Domain model validation & constraint tests
-│   └── test_repository.py    # SQLite repository CRUD, junction, and cascade tests
+│   ├── test_repository.py    # SQLite repository CRUD, junction, and cascade tests
+│   ├── test_crawler.py       # Polite crawling & directory layout tests
+│   ├── test_scouting.py      # OpenAlex, arXiv, Crossref & ranking tests
+│   ├── test_service.py       # End-to-end faculty scouting pipeline test
+│   ├── test_resume.py        # PDF, Markdown, and TXT résumé parsing tests
+│   ├── test_llm.py           # Mock and Gemini LLM provider tests
+│   ├── test_brief_synthesizer.py # Grounding, abstract labeling & hallucination rejection
+│   ├── test_email_generator.py # Cold email draft generation and safety tests
+│   ├── test_cli.py           # CLI argument parsing and error handling tests
+│   ├── test_milestone3_service_and_cli.py # M3 pipeline & CLI integration tests
+│   └── test_smoke_real_web.py # Optional real-world university live smoke test
 └── examples/
     └── quickstart.py         # End-to-end runnable foundation demonstration
 ```
@@ -124,45 +156,98 @@ This script demonstrates:
 
 ---
 
-## CLI Usage: Faculty Discovery & Paper Scouting
+## CLI Usage: Complete Workflow
 
-A.R.T.E.M.I.S. provides a command-line interface to scout university faculty directories and match academic publications against research keywords.
+A.R.T.E.M.I.S. provides modular subcommands for each stage of academic discovery, résumé analysis, research synthesis, and outreach draft generation.
 
-### Command Syntax
+### 1. Ingest Student Résumé (`ingest-resume`)
 
-```bash
-artemis scout <DIRECTORY_URL> -k <KEYWORDS...> [-f MAX_FACULTY] [-p MAX_PAPERS] [--db DB_PATH] [--no-persist]
-```
-
-or via python module:
+Extracts factual claims (skills, projects, coursework, research) from `.pdf`, `.md`, or `.txt` résumés into structured `ResumeEvidence` models. Every claim preserves its source snippet and starts as `UNVERIFIED` until reviewed by the student.
 
 ```bash
-python -m artemis scout <DIRECTORY_URL> -k <KEYWORDS...>
+artemis ingest-resume <RESUME_FILE> [--db DB_PATH]
 ```
 
-### Options
-
-| Flag | Default | Description |
-|---|---|---|
-| `<DIRECTORY_URL>` / `-u` | *Required* | Official university faculty directory URL (HTML) |
-| `-k`, `--keywords` | `[]` | Space-separated research keywords (e.g. `distributed consensus "fault tolerance"`) |
-| `-i`, `--institution` | `None` | Optional institution name override (e.g. `"Indian Institute of Technology Delhi"`) |
-| `-f`, `--max-faculty` | `5` | Maximum number of faculty members to scout |
-| `-p`, `--max-papers` | `3` | Maximum number of papers retrieved per professor |
-| `--db` | `artemis.db`| SQLite database file to persist discovered entities |
-| `--no-persist` | `False` | Run scouting without writing to SQLite |
-
-### Example CLI Commands
-
-**IIT Delhi Computer Science & Engineering:**
+**Example:**
 ```bash
-artemis scout https://homecse.iitd.ac.in/faculty/ -k "systems" "algorithms" -f 3 -p 2
+artemis ingest-resume ./student_cv.pdf --db artemis.db
 ```
 
-**IIT Madras Computer Science & Engineering:**
+### 2. Scout University Faculty & Papers (`scout`)
+
+Scouts a university faculty directory, parses public faculty details, and retrieves publications from OpenAlex and arXiv matching research keywords.
+
 ```bash
-artemis scout https://www.cse.iitm.ac.in/outerfaculty.php -k "cryptography" "security" -f 3 -p 2
+artemis scout <DIRECTORY_URL> -k <KEYWORDS...> [-f MAX_FACULTY] [-p MAX_PAPERS] [-i INSTITUTION] [--db DB_PATH]
 ```
+
+**Example:**
+```bash
+artemis scout https://homecse.iitd.ac.in/faculty/ -k "systems" "networks" -f 3 -p 2 --db artemis.db
+```
+
+### 3. Synthesize Grounded Research Brief (`brief`)
+
+Connects a discovered publication with authentic student résumé evidence in the database.
+- Strictly labels briefs as `[Abstract-Based Brief]` when full text is missing, preventing hallucinated methodologies.
+- Rejects fabricated evidence IDs not present in student evidence.
+- Reflects uncertainty (confidence <= 0.35) and documents specific background gaps when evidence is missing or unrelated.
+
+```bash
+artemis brief --prof <PROFESSOR_ID> --paper <PAPER_ID> [--db DB_PATH]
+```
+
+**Example:**
+```bash
+artemis brief --prof prof_16f28cefe74c --paper paper_8a54adc1f4cd --db artemis.db
+```
+
+### 4. Generate Cold Outreach Email Draft (`draft`)
+
+Generates a review-only outreach draft connecting the student's authentic qualifications to one specific paper.
+- Sets status strictly to `draft_pending` for user review (emails are **never** sent automatically).
+- Strictly forbids hallucinated prior relationships (e.g. "as we discussed") or phantom vacancies (e.g. "saw your posting").
+- Flags unverified professor email addresses with explicit safety warnings.
+
+```bash
+artemis draft --prof <PROFESSOR_ID> --brief <BRIEF_ID> [--name STUDENT_NAME] [--db DB_PATH]
+```
+
+**Example:**
+```bash
+artemis draft --prof prof_16f28cefe74c --brief brief_698b3b3c26c4 --name "Alex Kumar" --db artemis.db
+```
+
+### 5. Unified End-to-End Pipeline (`match`)
+
+Runs the entire workflow in one command: scouts faculty and papers, ingests the student's résumé, synthesizes grounded briefs, and generates review-ready email drafts.
+
+```bash
+artemis match <DIRECTORY_URL> -r <RESUME_FILE> -k <KEYWORDS...> [-f MAX_FACULTY] [--name STUDENT_NAME] [--db DB_PATH]
+```
+
+**Example:**
+```bash
+artemis match https://www.cse.iitm.ac.in/outerfaculty.php -r ./my_cv.md -k "cryptography" "security" -f 2 --name "Piyush Sahoo"
+```
+
+---
+
+## LLM Configuration: Replaceable Provider Interface
+
+A.R.T.E.M.I.S. decouples brief synthesis and email drafting from any specific LLM vendor via `LLMProvider`.
+
+- **Mock Provider (`mock`)**: Default for testing and offline development. Generates deterministic, grounded JSON schemas with zero external network calls or costs.
+- **Gemini Provider (`gemini`)**: Production provider connecting to Google Gemini (e.g. `gemini-2.0-flash`) via `httpx`. Never hardcodes keys.
+
+Configure in `.env`:
+```env
+ARTEMIS_LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.0-flash
+```
+
+If `ARTEMIS_LLM_PROVIDER` is set to `mock` or `GEMINI_API_KEY` is omitted, ARTEMIS defaults gracefully to the offline deterministic provider.
 
 ---
 
@@ -249,9 +334,15 @@ To uphold strict anti-hallucination and truthfulness standards:
   - Paper ranker separating topic relevance from author identity confidence.
   - CLI command `artemis scout` with formatted table and idempotent SQLite persistence.
   - 74 unit tests with mocked payloads + manual live smoke test.
-- [ ] **Milestone 3: Student Résumé Parsing & Research Brief Matching**
-  - Résumé text extraction and structured evidence ingestion.
-  - Replaceable LLM interface generating grounded research briefs and alignment rationales.
+- [x] **Milestone 3: Student Résumé Parsing & Research Brief Matching**
+  - Text & PDF résumé ingestion with `pypdf`, preserving exact snippets and unverified claim status.
+  - Structured `ResumeEvidence` models categorizing technical skills, coursework, and projects.
+  - Replaceable `LLMProvider` interface with deterministic offline `MockLLMProvider` and production `GeminiLLMProvider`.
+  - Research brief synthesizer enforcing `[Abstract-Based Brief]` labeling when full text is missing.
+  - Anti-hallucination guardrails: rejecting fabricated evidence IDs, reflecting uncertainty for unrelated backgrounds.
+  - Review-first cold email draft generator (`draft_pending`) referencing one specific paper and authentic evidence.
+  - CLI subcommands: `ingest-resume`, `brief`, `draft`, and unified `match` pipeline.
+  - 106 passing offline unit & integration tests with zero network dependencies.
 - [ ] **Milestone 4: Personalized Outreach & Gmail Draft Sync**
-  - Review-first draft generator.
   - Google OAuth 2.0 Gmail draft creator (drafts only, never sending).
+  - Draft synchronization status (`gmail_synced`) and local ID mapping.

@@ -399,12 +399,13 @@ class ArtemisRepository:
     # -------------------------------------------------------------------------
 
     def create_evidence(self, evidence: ResumeEvidence) -> ResumeEvidence:
-        """Insert verified résumé evidence."""
+        """Insert verified or extracted résumé evidence."""
         query = """
         INSERT INTO resume_evidence (
             id, category, title, description, skills_json,
-            key_achievements_json, source_reference, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            key_achievements_json, source_reference, verification_status,
+            raw_snippet, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         with self.conn:
             self.conn.execute(
@@ -417,6 +418,8 @@ class ArtemisRepository:
                     json.dumps(evidence.skills),
                     json.dumps(evidence.key_achievements),
                     evidence.source_reference,
+                    evidence.verification_status.value,
+                    evidence.raw_snippet,
                     evidence.created_at.isoformat(),
                     evidence.updated_at.isoformat(),
                 ),
@@ -433,6 +436,15 @@ class ArtemisRepository:
             return None
         return self._row_to_evidence(row)
 
+    def find_evidence_by_title(self, title: str) -> Optional[ResumeEvidence]:
+        """Find résumé evidence by title (case-insensitive)."""
+        cursor = self.conn.execute(
+            "SELECT * FROM resume_evidence WHERE LOWER(TRIM(title)) = LOWER(TRIM(?))",
+            (title,),
+        )
+        row = cursor.fetchone()
+        return self._row_to_evidence(row) if row else None
+
     def update_evidence(self, evidence: ResumeEvidence) -> ResumeEvidence:
         """Update existing résumé evidence."""
         evidence.updated_at = utc_now()
@@ -444,6 +456,8 @@ class ArtemisRepository:
             skills_json = ?,
             key_achievements_json = ?,
             source_reference = ?,
+            verification_status = ?,
+            raw_snippet = ?,
             updated_at = ?
         WHERE id = ?
         """
@@ -457,6 +471,8 @@ class ArtemisRepository:
                     json.dumps(evidence.skills),
                     json.dumps(evidence.key_achievements),
                     evidence.source_reference,
+                    evidence.verification_status.value,
+                    evidence.raw_snippet,
                     evidence.updated_at.isoformat(),
                     evidence.id,
                 ),
@@ -489,6 +505,16 @@ class ArtemisRepository:
             return cursor.rowcount > 0
 
     def _row_to_evidence(self, row: sqlite3.Row) -> ResumeEvidence:
+        v_status = VerificationStatus.UNVERIFIED
+        row_keys = row.keys()
+        if "verification_status" in row_keys and row["verification_status"]:
+            try:
+                v_status = VerificationStatus(row["verification_status"])
+            except ValueError:
+                v_status = VerificationStatus.UNVERIFIED
+
+        raw_snippet = row["raw_snippet"] if "raw_snippet" in row_keys else None
+
         return ResumeEvidence(
             id=row["id"],
             category=EvidenceCategory(row["category"]),
@@ -497,6 +523,8 @@ class ArtemisRepository:
             skills=json.loads(row["skills_json"]),
             key_achievements=json.loads(row["key_achievements_json"]),
             source_reference=row["source_reference"],
+            verification_status=v_status,
+            raw_snippet=raw_snippet,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
@@ -513,8 +541,8 @@ class ArtemisRepository:
             core_contributions_json, methodology, potential_alignment,
             matched_evidence_ids_json, open_questions_json,
             confidence_score, confidence_notes, sources_json,
-            created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            limitations_json, gaps_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         with self.conn:
             self.conn.execute(
@@ -533,6 +561,8 @@ class ArtemisRepository:
                     brief.confidence_score,
                     brief.confidence_notes,
                     json.dumps([s.model_dump(mode="json") for s in brief.sources]),
+                    json.dumps(brief.limitations),
+                    json.dumps(brief.gaps),
                     brief.created_at.isoformat(),
                     brief.updated_at.isoformat(),
                 ),
@@ -565,6 +595,8 @@ class ArtemisRepository:
             confidence_score = ?,
             confidence_notes = ?,
             sources_json = ?,
+            limitations_json = ?,
+            gaps_json = ?,
             updated_at = ?
         WHERE id = ?
         """
@@ -583,6 +615,8 @@ class ArtemisRepository:
                     brief.confidence_score,
                     brief.confidence_notes,
                     json.dumps([s.model_dump(mode="json") for s in brief.sources]),
+                    json.dumps(brief.limitations),
+                    json.dumps(brief.gaps),
                     brief.updated_at.isoformat(),
                     brief.id,
                 ),
@@ -608,6 +642,18 @@ class ArtemisRepository:
             return cursor.rowcount > 0
 
     def _row_to_brief(self, row: sqlite3.Row) -> ResearchBrief:
+        row_keys = row.keys()
+        limitations = (
+            json.loads(row["limitations_json"])
+            if "limitations_json" in row_keys and row["limitations_json"]
+            else []
+        )
+        gaps = (
+            json.loads(row["gaps_json"])
+            if "gaps_json" in row_keys and row["gaps_json"]
+            else []
+        )
+
         return ResearchBrief(
             id=row["id"],
             professor_id=row["professor_id"],
@@ -618,6 +664,8 @@ class ArtemisRepository:
             methodology=row["methodology"],
             potential_alignment=row["potential_alignment"],
             matched_evidence_ids=json.loads(row["matched_evidence_ids_json"]),
+            limitations=limitations,
+            gaps=gaps,
             open_questions=json.loads(row["open_questions_json"]),
             confidence_score=row["confidence_score"],
             confidence_notes=row["confidence_notes"],

@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from artemis.models.common import utc_now
+from artemis.models.common import VerificationStatus, utc_now
 from artemis.utils.ids import generate_id
 
 
@@ -58,6 +58,14 @@ class ResumeEvidence(BaseModel):
     source_reference: Optional[str] = Field(
         default=None,
         description="Provenance in résumé (e.g., 'Résumé page 1 / Projects' or repository URL).",
+    )
+    verification_status: VerificationStatus = Field(
+        default=VerificationStatus.UNVERIFIED,
+        description="Verification state of this claim (unverified until verified/reviewed).",
+    )
+    raw_snippet: Optional[str] = Field(
+        default=None,
+        description="Exact raw text snippet from the résumé supporting this claim.",
     )
     created_at: datetime = Field(
         default_factory=utc_now,

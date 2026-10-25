@@ -51,6 +51,14 @@ class ResearchBrief(BaseModel):
         default_factory=list,
         description="List of ResumeEvidence IDs that factually support this alignment.",
     )
+    limitations: list[str] = Field(
+        default_factory=list,
+        description="Identified or stated limitations of the research paper.",
+    )
+    gaps: list[str] = Field(
+        default_factory=list,
+        description="Explicit gaps where student background does not meet paper prerequisites.",
+    )
     open_questions: list[str] = Field(
         default_factory=list,
         description="Thoughtful research inquiries or extension ideas to raise in dialogue.",

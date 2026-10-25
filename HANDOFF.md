@@ -165,16 +165,135 @@ tests/test_smoke_real_web.py (1 skipped - requires RUN_LIVE_TESTS=1)
 
 ---
 
-## 5. System Readiness for Milestone 3
+## 5. Milestone 2 Completion Summary
 
-### Verdict: **READY FOR MILESTONE 3**
+- **Milestone 2 Status**: Completed and verified on real-world Indian institute faculty directories (IIT Delhi, IIT Madras, IIT Bombay, IIT Kanpur).
+- **Test Baseline**: 74 unit tests passed, 1 skipped.
 
-The faculty discovery and academic paper scouting pipeline is robust, polite, truthful, and verified against diverse real-world Indian university websites.
+---
 
-### Smallest Recommended Next Step for Milestone 3:
-1. **Student Résumé Evidence Ingestion**:
-   - Provide a clean interface to import student résumé facts (projects, skills, coursework) as `ResumeEvidence` models with category, achievements, and self-reported verification status.
-2. **Replaceable LLM Provider Interface**:
-   - Define an abstract `LLMProvider` protocol (supporting Google Gemini or local LLM) with a mock provider for zero-cost offline pytest execution.
-3. **Research Brief Synthesis**:
-   - Synthesize `ResearchBrief` objects connecting a discovered paper's core contributions with the student's authentic résumé evidence, strictly forbidding hallucinated student qualifications or fabricated paper conclusions.
+## 6. Milestone 3 Implementation & Verification Report
+
+**Date**: October 25, 2026  
+**Status**: Milestone 3 Complete & Fully Validated Offline  
+**Test Suite**: 106 Unit Tests Passed (0 Failed, 1 Skipped — Live Web Smoke Test)  
+
+### 6.1 What Was Implemented in Milestone 3
+
+1. **Student Résumé Ingestion (`artemis.resume`)**:
+   - `extract_text_from_file`: Robust extraction supporting `.pdf` (via `pypdf`), `.md`, and `.txt` with UTF-8 and Latin-1 fallbacks.
+   - `parse_resume_evidence`: Heuristic extraction into structured `ResumeEvidence` models with `skills`, `key_achievements`, exact `raw_snippet`, and strict initial `UNVERIFIED` status (self-reported claims).
+   - Skips contact headers and email addresses to avoid mistaking personal metadata for project titles.
+2. **Replaceable LLM Interface (`artemis.llm`)**:
+   - `LLMProvider` abstract interface with `generate()` and `generate_structured(schema: Type[T])`.
+   - `MockLLMProvider`: Deterministic, offline heuristic generator capable of extracting paper titles, evidence IDs, and sender names from structured prompts. Enables zero-cost, network-free, reproducible testing.
+   - `GeminiLLMProvider`: Lightweight REST client calling Google Generative Language API (`gemini-2.0-flash`) via `httpx` with `GEMINI_API_KEY`.
+   - `get_llm_provider()`: Factory dynamically selecting provider based on `ARTEMIS_LLM_PROVIDER` environment variable.
+3. **Research Brief Synthesis & Grounding Guardrails (`artemis.brief`)**:
+   - `ResearchBriefSynthesizer`: Connects discovered papers with authentic student qualifications.
+   - **Abstract-Only Safety**: When full paper manuscript is absent, brief headline is strictly prefixed with `[Abstract-Based Brief]` and methodology/limitations explicitly state derivation from abstract text. Prevents fabricating experimental benchmarks or participant numbers.
+   - **Fabricated Claim Rejection**: Verifies returned `matched_evidence_ids` against genuine student evidence. Discards hallucinated IDs.
+   - **Uncertainty Reflection**: When zero genuine evidence matches, forces confidence score `<= 0.35` and records explicit background gaps.
+   - **Deterministic Fallback**: Automatically activates keyword-based heuristic fallback if LLM service fails or outputs malformed non-JSON text.
+4. **Cold Outreach Email Draft Generator (`artemis.email`)**:
+   - `DraftGenerator`: Connects brief and evidence to a single publication.
+   - **Review-First Stance**: Status is set strictly to `draft_pending`. Emails are never sent automatically.
+   - **Forbidden Phrase Filtering**: Scans and sanitizes fabricated prior interactions (`"as we discussed"`, `"enjoyed your class"`) or phantom openings (`"saw your posting"`).
+   - **Recipient Email Safety**: If professor email is unverified or missing from the directory, generates a safe review placeholder and flags an explicit audit warning.
+   - **Word Count Discipline**: Trims drafts exceeding 300 words to ensure respectful brevity.
+5. **Database Schema & Migrations (`artemis.db`)**:
+   - Updated `resume_evidence` table with `raw_snippet` and `verification_status`.
+   - Updated `research_briefs` table with `limitations_json` and `gaps_json`.
+   - Backward-compatible SQLite table migration checks added to `init_db`.
+6. **CLI Subcommands & Pipeline (`artemis.cli`)**:
+   - `artemis ingest-resume <file>`: Ingests résumé and persists evidence.
+   - `artemis brief --prof <ID> --paper <ID>`: Synthesizes and displays research brief.
+   - `artemis draft --prof <ID> --brief <ID> [--name SENDER_NAME]`: Generates formatted outreach draft.
+   - `artemis match <URL> -r <FILE> -k <KEYWORDS...>`: Complete automated scouting, matching, and drafting pipeline.
+
+---
+
+### 6.2 Exact Pytest Results
+
+**Execution Command**:
+```powershell
+.\.venv\Scripts\pytest -v
+```
+
+**Output**:
+```text
+============================= test session starts =============================
+platform win32 -- Python 3.10.9, pytest-9.1.1, pluggy-1.7.0 -- C:\Users\PIYUSH\Desktop\ARTEMIS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\PIYUSH\Desktop\ARTEMIS
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.15.1
+collecting ... collected 107 items
+
+tests/test_brief_synthesizer.py (4 passed)
+tests/test_cli.py (6 passed)
+tests/test_crawler.py (9 passed)
+tests/test_email_generator.py (4 passed)
+tests/test_llm.py (11 passed)
+tests/test_milestone3_service_and_cli.py (5 passed)
+tests/test_models.py (22 passed)
+tests/test_repository.py (25 passed)
+tests/test_resume.py (8 passed)
+tests/test_scouting.py (11 passed)
+tests/test_service.py (1 passed)
+tests/test_smoke_real_web.py (1 skipped - requires RUN_LIVE_TESTS=1)
+
+======================= 106 passed, 1 skipped in 0.99s ========================
+```
+
+---
+
+### 6.3 Anti-Hallucination & Grounding Guardrails Verification Matrix
+
+| Risk / Failure Mode | Safety Guardrail in Code | Test Verification |
+|---|---|---|
+| **Hallucinated Paper Methodology** | Abstract-only papers are strictly tagged `[Abstract-Based Brief]`. Methodology must note abstract origin. | `test_synthesize_abstract_only_paper_enforces_labeling` |
+| **Hallucinated Student Evidence IDs** | `_apply_grounding_guardrails` verifies all returned IDs against ingested `valid_evidence_map`. Fabricated IDs are stripped. | `test_reject_fabricated_evidence_ids` |
+| **Overconfident Matching on Unrelated Evidence** | When zero genuine evidence items match, confidence is forced to `<= 0.35` and background gaps are populated. | `test_missing_or_unrelated_evidence_returns_uncertainty` |
+| **Malformed LLM Output / Non-JSON** | `_deterministic_fallback_synthesis` keyword matcher generates grounded brief without crashing. | `test_deterministic_fallback_on_malformed_llm_json` |
+| **Invented Prior Relationships or Openings** | `FORBIDDEN_PHRASES` regex filters out "as we discussed", "saw your posting", etc. | `test_forbids_hallucinated_prior_contact_phrases` |
+| **Unverified Professor Email** | Flags audit warning and uses safe placeholder to prevent accidental blind sending. | `test_unverified_missing_email_generates_safety_warning` |
+| **Automated Email Transmission** | Draft status is strictly `draft_pending`. No SMTP or external sending mechanism exists. | `test_synthesize_brief_and_generate_draft_end_to_end` |
+
+---
+
+### 6.4 Commands to Reproduce Milestone 3 Verification
+
+#### 1. Run Complete Pytest Suite
+```powershell
+.\.venv\Scripts\pytest -v
+```
+
+#### 2. Run Résumé Ingestion CLI
+```powershell
+.\.venv\Scripts\python.exe -m artemis ingest-resume tests/fixtures/sample_resume.md --db test.db
+```
+
+#### 3. Run End-to-End Synthesis and Drafting
+```powershell
+.\.venv\Scripts\python.exe -m artemis match https://www.cse.iitm.ac.in/outerfaculty.php -r ./my_resume.md -k "systems" "security" -f 2 --name "Student Researcher"
+```
+
+---
+
+## 7. System Readiness for Milestone 4
+
+### Verdict: **READY FOR MILESTONE 4**
+
+Milestone 3 is complete, fully tested, and resilient against hallucination. The SQLite database reliably persists student qualifications, professor profiles, publications, research briefs, and outreach drafts.
+
+### Scope for Milestone 4 (Personalized Outreach & Gmail Draft Sync):
+1. **Google OAuth 2.0 Client**:
+   - Secure local flow with `credentials.json` and persistent token storage.
+   - Minimal Gmail scope (`https://www.googleapis.com/auth/gmail.compose`): **draft creation only, strictly prohibiting sending (`gmail.send`)**.
+2. **Gmail API Draft Creator**:
+   - Convert `EmailDraft` (with status `draft_pending`) into a native Gmail draft.
+   - Store the resulting Gmail draft ID in `gmail_draft_id` and update status to `gmail_synced`.
+3. **CLI Command**:
+   - `artemis sync-gmail [--draft-id DRAFT_ID] [--db DB_PATH]` with clear confirmation and safety prompts.

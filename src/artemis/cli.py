@@ -7,6 +7,9 @@ import sys
 from typing import Sequence
 
 from artemis.crawler.exceptions import JavaScriptRenderedPageError, RateLimitExceededError, UnsupportedPageError
+from artemis.models.brief import ResearchBrief
+from artemis.models.email import EmailDraft
+from artemis.models.resume import ResumeEvidence
 from artemis.service import ArtemisScoutingService, FacultyScoutResult
 
 
@@ -18,6 +21,7 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
 
+    # 1. Scout
     scout_parser = subparsers.add_parser("scout", help="Scout faculty directory and find relevant research papers")
     scout_parser.add_argument(
         "url",
@@ -33,7 +37,7 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
         "-k", "--keywords",
         nargs="+",
         default=[],
-        help="Research-interest keywords (e.g. 'distributed systems' 'consensus' 'fault tolerance')",
+        help="Research-interest keywords (e.g. 'distributed systems' 'consensus')",
     )
     scout_parser.add_argument(
         "-f", "--max-faculty",
@@ -62,6 +66,106 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-persist",
         action="store_true",
         help="Do not save discovered professors and papers to database",
+    )
+
+    # 2. Ingest Résumé
+    resume_parser = subparsers.add_parser("ingest-resume", help="Ingest student résumé (.pdf, .txt, .md)")
+    resume_parser.add_argument(
+        "file",
+        help="Path to the student résumé file",
+    )
+    resume_parser.add_argument(
+        "--db",
+        default="artemis.db",
+        help="Path to SQLite database file (default: artemis.db)",
+    )
+
+    # 3. Brief Synthesis
+    brief_parser = subparsers.add_parser("brief", help="Synthesize research brief from paper and evidence")
+    brief_parser.add_argument(
+        "--prof",
+        dest="prof_id",
+        required=True,
+        help="Professor ID from SQLite database",
+    )
+    brief_parser.add_argument(
+        "--paper",
+        dest="paper_id",
+        required=True,
+        help="Paper ID from SQLite database",
+    )
+    brief_parser.add_argument(
+        "--db",
+        default="artemis.db",
+        help="Path to SQLite database file (default: artemis.db)",
+    )
+
+    # 4. Draft Generation
+    draft_parser = subparsers.add_parser("draft", help="Generate review-only cold email draft")
+    draft_parser.add_argument(
+        "--prof",
+        dest="prof_id",
+        required=True,
+        help="Professor ID from SQLite database",
+    )
+    draft_parser.add_argument(
+        "--brief",
+        dest="brief_id",
+        required=True,
+        help="Research Brief ID from SQLite database",
+    )
+    draft_parser.add_argument(
+        "--name",
+        dest="student_name",
+        default="Student Researcher",
+        help="Sender name for email signature (default: 'Student Researcher')",
+    )
+    draft_parser.add_argument(
+        "--db",
+        default="artemis.db",
+        help="Path to SQLite database file (default: artemis.db)",
+    )
+
+    # 5. Full Match Pipeline
+    match_parser = subparsers.add_parser("match", help="Complete pipeline: scout, ingest résumé, brief, and draft")
+    match_parser.add_argument(
+        "url",
+        help="URL of the university faculty directory",
+    )
+    match_parser.add_argument(
+        "-r", "--resume",
+        dest="resume_file",
+        required=True,
+        help="Path to student résumé file (.pdf, .txt, .md)",
+    )
+    match_parser.add_argument(
+        "-k", "--keywords",
+        nargs="+",
+        default=[],
+        help="Research-interest keywords",
+    )
+    match_parser.add_argument(
+        "-f", "--max-faculty",
+        type=int,
+        default=3,
+        help="Maximum faculty to scout (default: 3)",
+    )
+    match_parser.add_argument(
+        "-i", "--institution",
+        dest="institution",
+        default=None,
+        help="Target university name override",
+    )
+    match_parser.add_argument(
+        "--name",
+        dest="student_name",
+        default="Student Researcher",
+        help="Sender name for email signature (default: 'Student Researcher')",
+    )
+    match_parser.add_argument(
+        "--db",
+        default="artemis.db",
+        help="Path to SQLite database file (default: artemis.db)",
     )
 
     parsed = parser.parse_args(args)
@@ -169,6 +273,106 @@ def format_table(results: list[FacultyScoutResult]) -> str:
     return sanitize_str("\n".join(lines))
 
 
+def format_evidence_table(evidence: list[ResumeEvidence]) -> str:
+    """Format extracted résumé evidence records into a readable report."""
+    if not evidence:
+        return "No verifiable résumé evidence items extracted."
+
+    lines: list[str] = []
+    lines.append("=" * 80)
+    lines.append("A.R.T.E.M.I.S. RÉSUMÉ EVIDENCE INGESTION REPORT")
+    lines.append("=" * 80)
+    lines.append(f"Extracted {len(evidence)} factual qualifications/claims (Status: UNVERIFIED until reviewed):\n")
+
+    for i, ev in enumerate(evidence, 1):
+        lines.append(f"[{i}] {ev.title} (ID: {ev.id})")
+        lines.append(f"    Category:         {ev.category.value}")
+        lines.append(f"    Verification:     {ev.verification_status.value} (self-reported student claim)")
+        if ev.skills:
+            lines.append(f"    Skills:           {', '.join(ev.skills[:8])}")
+        if ev.description:
+            lines.append(f"    Description:      {ev.description[:120]}...")
+        if ev.key_achievements:
+            lines.append("    Key Highlights:")
+            for a in ev.key_achievements[:3]:
+                lines.append(f"      • {a}")
+        if ev.source_reference:
+            lines.append(f"    Source:           {ev.source_reference}")
+        lines.append("")
+
+    lines.append("=" * 80)
+    return sanitize_str("\n".join(lines))
+
+
+def format_brief(brief: ResearchBrief) -> str:
+    """Format synthesized research brief into a readable report."""
+    lines: list[str] = []
+    lines.append("=" * 80)
+    lines.append("A.R.T.E.M.I.S. RESEARCH BRIEF")
+    lines.append("=" * 80)
+    lines.append(f"Headline:         {brief.headline}")
+    lines.append(f"Brief ID:         {brief.id}")
+    lines.append(f"Professor ID:     {brief.professor_id}")
+    if brief.paper_id:
+        lines.append(f"Paper ID:         {brief.paper_id}")
+    lines.append(f"Confidence:       {brief.confidence_score:.2f} ({brief.confidence_notes or 'Grounded analysis'})")
+    lines.append("-" * 80)
+
+    lines.append("\nSummary:")
+    lines.append(f"  {brief.summary}")
+
+    if brief.core_contributions:
+        lines.append("\nCore Contributions:")
+        for c in brief.core_contributions:
+            lines.append(f"  • {c}")
+
+    if brief.methodology:
+        lines.append(f"\nMethodology:\n  {brief.methodology}")
+
+    if brief.limitations:
+        lines.append("\nIdentified Limitations:")
+        for l in brief.limitations:
+            lines.append(f"  • {l}")
+
+    lines.append("\nStudent-Research Alignment:")
+    lines.append(f"  {brief.potential_alignment}")
+    if brief.matched_evidence_ids:
+        lines.append(f"  Matched Evidence IDs: [{', '.join(brief.matched_evidence_ids)}]")
+
+    if brief.gaps:
+        lines.append("\nIdentified Background Gaps:")
+        for g in brief.gaps:
+            lines.append(f"  • {g}")
+
+    if brief.open_questions:
+        lines.append("\nSuggested Questions for Professor:")
+        for q in brief.open_questions:
+            lines.append(f"  • {q}")
+
+    lines.append("\n" + "=" * 80)
+    return sanitize_str("\n".join(lines))
+
+
+def format_draft(draft: EmailDraft) -> str:
+    """Format cold outreach email draft for terminal presentation."""
+    lines: list[str] = []
+    lines.append("=" * 80)
+    lines.append(f"A.R.T.E.M.I.S. OUTREACH EMAIL DRAFT [STATUS: {draft.status.value}]")
+    lines.append("=" * 80)
+    lines.append(f"Draft ID:         {draft.id}")
+    lines.append(f"Recipient:        {draft.recipient_name} <{draft.recipient_email}>")
+    lines.append(f"Subject:          {draft.subject}")
+    lines.append("-" * 80)
+    lines.append("\n" + draft.body + "\n")
+    lines.append("-" * 80)
+    if draft.rationale:
+        lines.append(f"Rationale:        {draft.rationale}")
+    if draft.verification_notes:
+        lines.append(f"Safety & Audit:   {draft.verification_notes}")
+    lines.append("=" * 80)
+    return sanitize_str("\n".join(lines))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Main CLI entrypoint."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -179,39 +383,111 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parse_args(argv)
 
-    if not args.command or args.command != "scout":
-        print("Usage: artemis scout <URL> -k <KEYWORDS> [-f MAX_FACULTY] [-p MAX_PAPERS]")
-        print("Run 'artemis scout --help' for options.")
+    if not args.command:
+        print("Usage: artemis <command> [options]")
+        print("Commands: scout, ingest-resume, brief, draft, match")
+        print("Run 'artemis <command> --help' for details.")
         return 1
-
-    if not args.url:
-        print("Error: Faculty directory URL is required. Example: artemis scout https://example.edu/faculty -k distributed")
-        return 1
-
-    print(f"\n[+] A.R.T.E.M.I.S. Scouting: {args.url}")
-    if args.keywords:
-        print(f"    Keywords:      {', '.join(args.keywords)}")
-    print(f"    Max Faculty:   {args.max_faculty} | Max Papers/Faculty: {args.max_papers}")
-    print(f"    Persistence:   {'Enabled (' + args.db + ')' if not args.no_persist else 'Disabled'}")
-    print("    Fetching polite directory listing...")
 
     try:
-        with ArtemisScoutingService(db_path=args.db) as service:
-            results = service.scout(
-                directory_url=args.url,
-                keywords=args.keywords,
-                max_faculty=args.max_faculty,
-                max_papers_per_faculty=args.max_papers,
-                institution=args.institution,
-                persist=not args.no_persist,
-            )
+        # 1. Ingest Résumé
+        if args.command == "ingest-resume":
+            print(f"\n[+] Ingesting résumé: {args.file}")
+            with ArtemisScoutingService(db_path=args.db) as service:
+                items = service.ingest_resume(args.file, persist=True)
+            print("\n" + format_evidence_table(items))
+            print(f"[OK] Ingested and persisted {len(items)} evidence items to '{args.db}'.")
+            return 0
 
-        print("\n" + format_table(results))
-        total_papers = sum(len(r.papers) for r in results)
-        print(f"\n[OK] Scouting complete. {len(results)} faculty and {total_papers} papers processed.")
-        if not args.no_persist:
-            print(f"[OK] Persisted results to SQLite repository: '{args.db}'")
-        return 0
+        # 2. Synthesize Brief
+        elif args.command == "brief":
+            print(f"\n[+] Synthesizing research brief for Professor '{args.prof_id}' and Paper '{args.paper_id}'...")
+            with ArtemisScoutingService(db_path=args.db) as service:
+                brief = service.synthesize_brief(
+                    professor_id=args.prof_id,
+                    paper_id=args.paper_id,
+                    persist=True,
+                )
+            print("\n" + format_brief(brief))
+            print(f"[OK] Research brief synthesized and persisted to '{args.db}'.")
+            return 0
+
+        # 3. Generate Draft
+        elif args.command == "draft":
+            print(f"\n[+] Generating cold email draft for Professor '{args.prof_id}' from Brief '{args.brief_id}'...")
+            with ArtemisScoutingService(db_path=args.db) as service:
+                draft = service.generate_draft(
+                    professor_id=args.prof_id,
+                    brief_id=args.brief_id,
+                    student_name=args.student_name,
+                    persist=True,
+                )
+            print("\n" + format_draft(draft))
+            print(f"[OK] Email draft generated and persisted (Status: {draft.status.value}) to '{args.db}'.")
+            return 0
+
+        # 4. Full Match Pipeline
+        elif args.command == "match":
+            print(f"\n[+] A.R.T.E.M.I.S. End-to-End Match Pipeline: {args.url}")
+            print(f"    Résumé:        {args.resume_file}")
+            if args.keywords:
+                print(f"    Keywords:      {', '.join(args.keywords)}")
+            print("    Executing discovery, evidence extraction, brief synthesis, and draft generation...")
+
+            with ArtemisScoutingService(db_path=args.db) as service:
+                outputs = service.match_and_draft_pipeline(
+                    directory_url=args.url,
+                    resume_path=args.resume_file,
+                    keywords=args.keywords,
+                    max_faculty=args.max_faculty,
+                    institution=args.institution,
+                    student_name=args.student_name,
+                    persist=True,
+                )
+
+            print(f"\n[OK] Pipeline completed. Generated {len(outputs)} grounded outreach dossiers:")
+            for i, (prof, paper, brief, draft) in enumerate(outputs, 1):
+                print(f"\n{'#' * 80}")
+                print(f"DOSSIER [{i}]: {prof.name} ({prof.institution})")
+                print(f"{'#' * 80}")
+                print(format_brief(brief))
+                print(format_draft(draft))
+
+            return 0
+
+        # 5. Scout (Milestone 2)
+        elif args.command == "scout":
+            if not args.url:
+                print("Error: Faculty directory URL is required. Example: artemis scout https://example.edu/faculty -k distributed")
+                return 1
+
+            print(f"\n[+] A.R.T.E.M.I.S. Scouting: {args.url}")
+            if args.keywords:
+                print(f"    Keywords:      {', '.join(args.keywords)}")
+            print(f"    Max Faculty:   {args.max_faculty} | Max Papers/Faculty: {args.max_papers}")
+            print(f"    Persistence:   {'Enabled (' + args.db + ')' if not args.no_persist else 'Disabled'}")
+            print("    Fetching polite directory listing...")
+
+            with ArtemisScoutingService(db_path=args.db) as service:
+                results = service.scout(
+                    directory_url=args.url,
+                    keywords=args.keywords,
+                    max_faculty=args.max_faculty,
+                    max_papers_per_faculty=args.max_papers,
+                    institution=args.institution,
+                    persist=not args.no_persist,
+                )
+
+            print("\n" + format_table(results))
+            total_papers = sum(len(r.papers) for r in results)
+            print(f"\n[OK] Scouting complete. {len(results)} faculty and {total_papers} papers processed.")
+            if not args.no_persist:
+                print(f"[OK] Persisted results to SQLite repository: '{args.db}'")
+            return 0
+
+        else:
+            print(f"Unknown command: {args.command}")
+            return 1
 
     except JavaScriptRenderedPageError as exc:
         print("\n" + "!" * 80)
@@ -229,7 +505,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 4
 
     except Exception as exc:
-        print(f"\n[ERROR] Scouting failed: {exc}", file=sys.stderr)
+        print(f"\n[ERROR] Command failed: {exc}", file=sys.stderr)
         return 1
 
 

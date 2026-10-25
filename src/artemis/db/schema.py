@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS resume_evidence (
     skills_json TEXT NOT NULL DEFAULT '[]',
     key_achievements_json TEXT NOT NULL DEFAULT '[]',
     source_reference TEXT,
+    verification_status TEXT NOT NULL DEFAULT 'unverified',
+    raw_snippet TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -80,6 +82,8 @@ CREATE TABLE IF NOT EXISTS research_briefs (
     confidence_score REAL NOT NULL DEFAULT 1.0,
     confidence_notes TEXT,
     sources_json TEXT NOT NULL DEFAULT '[]',
+    limitations_json TEXT NOT NULL DEFAULT '[]',
+    gaps_json TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -112,6 +116,19 @@ CREATE INDEX IF NOT EXISTS idx_email_drafts_status ON email_drafts(status);
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Initialize all database tables and indexes."""
+    """Initialize all database tables and indexes, applying backward-compatible migrations."""
     with conn:
         conn.executescript(SCHEMA_SQL)
+        cursor = conn.execute("PRAGMA table_info(resume_evidence)")
+        cols = {row[1] for row in cursor.fetchall()}
+        if "verification_status" not in cols:
+            conn.execute("ALTER TABLE resume_evidence ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'unverified'")
+        if "raw_snippet" not in cols:
+            conn.execute("ALTER TABLE resume_evidence ADD COLUMN raw_snippet TEXT")
+
+        brief_cursor = conn.execute("PRAGMA table_info(research_briefs)")
+        brief_cols = {row[1] for row in brief_cursor.fetchall()}
+        if "limitations_json" not in brief_cols:
+            conn.execute("ALTER TABLE research_briefs ADD COLUMN limitations_json TEXT NOT NULL DEFAULT '[]'")
+        if "gaps_json" not in brief_cols:
+            conn.execute("ALTER TABLE research_briefs ADD COLUMN gaps_json TEXT NOT NULL DEFAULT '[]'")

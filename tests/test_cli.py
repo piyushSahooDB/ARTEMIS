@@ -89,7 +89,7 @@ class TestCLI:
         exit_code = main([])
         assert exit_code == 1
         captured = capsys.readouterr()
-        assert "Usage: artemis scout" in captured.out
+        assert "Usage: artemis" in captured.out
 
     def test_main_spa_error_reports_clearly(
         self,
