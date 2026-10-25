@@ -16,6 +16,7 @@ from artemis.models.email import EmailDraft, EmailDraftStatus
 from artemis.models.paper import Paper
 from artemis.models.professor import Professor
 from artemis.models.resume import EvidenceCategory, ResumeEvidence
+from artemis.models.run import ScoutingRun
 
 
 class ArtemisRepository:
@@ -633,6 +634,16 @@ class ArtemisRepository:
         )
         return [self._row_to_brief(r) for r in cursor.fetchall()]
 
+    def list_briefs(self, limit: Optional[int] = None) -> list[ResearchBrief]:
+        """List all research briefs across all professors, ordered by creation date."""
+        query = "SELECT * FROM research_briefs ORDER BY created_at DESC"
+        params: tuple[Any, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        cursor = self.conn.execute(query, params)
+        return [self._row_to_brief(r) for r in cursor.fetchall()]
+
     def delete_brief(self, brief_id: str) -> bool:
         """Delete a research brief by ID."""
         with self.conn:
@@ -804,4 +815,54 @@ class ArtemisRepository:
             verification_notes=row["verification_notes"],
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    # -------------------------------------------------------------------------
+    # Scouting Runs History
+    # -------------------------------------------------------------------------
+
+    def create_scouting_run(self, run: ScoutingRun) -> ScoutingRun:
+        """Insert a scouting run execution history record."""
+        query = """
+        INSERT INTO scouting_runs (
+            id, directory_url, keywords_json, faculty_found,
+            papers_found, status, error_message, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        with self.conn:
+            self.conn.execute(
+                query,
+                (
+                    run.id,
+                    run.directory_url,
+                    json.dumps(run.keywords),
+                    run.faculty_found,
+                    run.papers_found,
+                    run.status,
+                    run.error_message,
+                    run.created_at.isoformat(),
+                ),
+            )
+        return run
+
+    def list_scouting_runs(self, limit: Optional[int] = None) -> list[ScoutingRun]:
+        """List scouting runs ordered by creation date."""
+        query = "SELECT * FROM scouting_runs ORDER BY created_at DESC"
+        params: tuple[Any, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        cursor = self.conn.execute(query, params)
+        return [self._row_to_scouting_run(r) for r in cursor.fetchall()]
+
+    def _row_to_scouting_run(self, row: sqlite3.Row) -> ScoutingRun:
+        return ScoutingRun(
+            id=row["id"],
+            directory_url=row["directory_url"],
+            keywords=json.loads(row["keywords_json"]) if row["keywords_json"] else [],
+            faculty_found=row["faculty_found"],
+            papers_found=row["papers_found"],
+            status=row["status"],
+            error_message=row["error_message"],
+            created_at=datetime.fromisoformat(row["created_at"]),
         )

@@ -18,6 +18,7 @@ from artemis.models.email import EmailDraft
 from artemis.models.paper import Paper
 from artemis.models.professor import Professor
 from artemis.models.resume import ResumeEvidence
+from artemis.models.run import ScoutingRun
 from artemis.resume.extractor import ResumeParser
 from artemis.scouting.arxiv import ArxivClient
 from artemis.scouting.crossref import CrossrefClient
@@ -97,36 +98,68 @@ class ArtemisScoutingService:
         """Scout a faculty directory URL and find top matching research publications."""
         kw_list = list(keywords) if keywords else []
 
-        # 1. Discover faculty
-        professors = self.parser.parse_directory(
-            directory_url=directory_url,
-            research_keywords=kw_list,
-            max_faculty=max_faculty,
-            max_profile_depth=max_faculty,
-            institution_name=institution,
-        )
-
         results: list[FacultyScoutResult] = []
         repo = self.get_repository() if persist else None
 
-        # 2. Scout academic papers for each faculty member
-        for prof in professors:
-            scouted_papers = self._scout_papers_for_professor(
-                professor=prof,
-                keywords=kw_list,
-                max_papers=max_papers_per_faculty,
+        try:
+            # 1. Discover faculty
+            professors = self.parser.parse_directory(
+                directory_url=directory_url,
+                research_keywords=kw_list,
+                max_faculty=max_faculty,
+                max_profile_depth=max_faculty,
+                institution_name=institution,
             )
 
-            # 3. Optional persistence to existing SQLite ArtemisRepository
+            # 2. Scout academic papers for each faculty member
+            for prof in professors:
+                scouted_papers = self._scout_papers_for_professor(
+                    professor=prof,
+                    keywords=kw_list,
+                    max_papers=max_papers_per_faculty,
+                )
+
+                # 3. Optional persistence to existing SQLite ArtemisRepository
+                if repo:
+                    try:
+                        self._persist_professor_and_papers(repo, prof, [sp.paper for sp in scouted_papers])
+                    except Exception as exc:
+                        logger.warning(f"Could not persist results for {prof.name}: {exc}")
+
+                results.append(FacultyScoutResult(professor=prof, papers=scouted_papers))
+
+            if repo:
+                total_papers = sum(len(r.papers) for r in results)
+                try:
+                    repo.create_scouting_run(
+                        ScoutingRun(
+                            directory_url=directory_url,
+                            keywords=kw_list,
+                            faculty_found=len(results),
+                            papers_found=total_papers,
+                            status="completed",
+                        )
+                    )
+                except Exception as exc:
+                    logger.warning(f"Could not record scouting run: {exc}")
+
+            return results
+        except Exception as exc:
             if repo:
                 try:
-                    self._persist_professor_and_papers(repo, prof, [sp.paper for sp in scouted_papers])
-                except Exception as exc:
-                    logger.warning(f"Could not persist results for {prof.name}: {exc}")
-
-            results.append(FacultyScoutResult(professor=prof, papers=scouted_papers))
-
-        return results
+                    repo.create_scouting_run(
+                        ScoutingRun(
+                            directory_url=directory_url,
+                            keywords=kw_list,
+                            faculty_found=0,
+                            papers_found=0,
+                            status="failed",
+                            error_message=str(exc),
+                        )
+                    )
+                except Exception as log_exc:
+                    logger.warning(f"Could not record failed scouting run: {log_exc}")
+            raise
 
     def _scout_papers_for_professor(
         self,

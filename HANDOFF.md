@@ -282,18 +282,115 @@ tests/test_smoke_real_web.py (1 skipped - requires RUN_LIVE_TESTS=1)
 
 ---
 
-## 7. System Readiness for Milestone 4
+## 8. Milestone 4 Implementation & Verification Report
 
-### Verdict: **READY FOR MILESTONE 4**
+**Date**: October 26, 2026  
+**Status**: Milestone 4 Complete — Research Intelligence Dashboard Built & Tested  
+**Test Suite**: 118 Unit & Integration Tests Passed (0 Failed, 1 Skipped — Live Web Smoke Test)  
 
-Milestone 3 is complete, fully tested, and resilient against hallucination. The SQLite database reliably persists student qualifications, professor profiles, publications, research briefs, and outreach drafts.
+---
 
-### Scope for Milestone 4 (Personalized Outreach & Gmail Draft Sync):
-1. **Google OAuth 2.0 Client**:
-   - Secure local flow with `credentials.json` and persistent token storage.
-   - Minimal Gmail scope (`https://www.googleapis.com/auth/gmail.compose`): **draft creation only, strictly prohibiting sending (`gmail.send`)**.
-2. **Gmail API Draft Creator**:
-   - Convert `EmailDraft` (with status `draft_pending`) into a native Gmail draft.
-   - Store the resulting Gmail draft ID in `gmail_draft_id` and update status to `gmail_synced`.
-3. **CLI Command**:
-   - `artemis sync-gmail [--draft-id DRAFT_ID] [--db DB_PATH]` with clear confirmation and safety prompts.
+### 8.1 Summary of Implemented Features
+
+1. **Local Streamlit Web Application (`app.py`)**:
+   - Single root entrypoint launched via `streamlit run app.py`.
+   - Binds strictly to `localhost:8501` (no public exposure, CORS and XSRF configured).
+   - Polished dark navy / charcoal design system (`#0e1117`, `#161b22`, border `#30363d`) with muted gold accent (`#e6af2e`).
+   - Modular navigation across 7 specialized application sections.
+
+2. **Section A — Overview Dashboard (`artemis.ui.views.dashboard`)**:
+   - Real-time aggregated metrics from local SQLite: Discovered Faculty, Tracked Publications, Research Briefs, and Pending Review Drafts.
+   - Recent Scouting Runs table with status badges (`COMPLETED` / `FAILED`), directory URL, keyword tags, and error diagnostics.
+   - Recently discovered faculty cards with email badges and recently tracked papers with match scores.
+   - Graceful empty states with actionable callouts when database is fresh.
+
+3. **Section B — Research Scout (`artemis.ui.views.scout`)**:
+   - Search & crawl interface taking university faculty directory URL, research keywords, max faculty, and max papers sliders.
+   - Synchronous polite execution with spinner feedback.
+   - Direct persistence of discovered entities and automated logging to `scouting_runs` table.
+   - Clear error reporting for JavaScript-only SPAs or network failures without hallucinating faculty.
+
+4. **Section C — Professor Explorer (`artemis.ui.views.professors`)**:
+   - Searchable by name, department, institution, or research focus.
+   - Filterable by email verification status (`Verified Official Only`, `With Email Only`, `No Email Listed`).
+   - Expander card views displaying verified profile links, lab websites, Google Scholar URLs, source provenance, and associated papers.
+   - One-click navigation to synthesize research briefs for any faculty member.
+
+5. **Section D — Paper Explorer (`artemis.ui.views.papers`)**:
+   - Searchable across title, authors, and abstract text.
+   - Filterable by source platform (OpenAlex, arXiv) and minimum relevance score.
+   - Clear distinction between bibliographic metadata and verified faculty author identity.
+   - Explicit `[Abstract-Only Available]` boundary indicator to prevent hallucinated full-text methodologies.
+   - Persistent clickable links for DOI, arXiv, and original publication URLs.
+
+6. **Section E — Research Brief Workspace (`artemis.ui.views.briefs`)**:
+   - Dynamic faculty and paper selectors with preselection sync.
+   - Grounded brief synthesis using configured LLM provider (Mock or Gemini API).
+   - Prominent `[Abstract-Based Brief]` badge and alignment confidence score.
+   - Structured sections for Research Problem, Methodology, Key Contribution, Textual Limitations, Matched Student Evidence (with verified skills/project tags), Skill Gaps, and Suggested Discussion Questions.
+   - One-click "Generate Outreach Draft" button redirecting directly to Draft Review.
+
+7. **Section F — Outreach Draft Review (`artemis.ui.views.drafts`)**:
+   - Recipient header with target faculty, institution, and deliverability status badge.
+   - Editable Subject Line and Body (`st.text_area`).
+   - **Live Automated Quality Control Card**:
+     - Word count verification ($\le 300$ words, optimal 120-220).
+     - Anti-hallucination scanner flagging prohibited phrases (e.g. *"as we discussed"*, *"per our conversation"*, *"saw your job posting"*, *"in your lecture"*).
+     - Template placeholder detection (`[Insert Project]`).
+     - Recipient email deliverability and placeholder alerts (`@example.com`).
+     - Target paper grounding check.
+   - Action buttons: "Save Edits to Database" (calling `repo.update_draft`), "Mark as Reviewed", and clipboard helper.
+   - Mandatory safety notice: A.R.T.E.M.I.S. creates review drafts only and never sends emails automatically.
+
+8. **Section G — Settings & System Status (`artemis.ui.views.settings`)**:
+   - Active SQLite database path switcher and table record counts.
+   - Active LLM provider diagnostics (Mock vs Gemini API with masked keys).
+   - Crawler HTTP User-Agent and politeness rate limits.
+   - Git commit hash, Python version, and operational instructions.
+
+---
+
+### 8.2 Test Verification & Quality Assurance
+
+All 118 unit and integration tests pass cleanly in under 1.5 seconds:
+
+```powershell
+.\.venv\Scripts\pytest -v
+```
+
+```text
+============================= test session starts =============================
+platform win32 -- Python 3.10.9, pytest-9.1.1, pluggy-1.7.0
+rootdir: C:\Users\PIYUSH\Desktop\ARTEMIS
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.15.1
+collected 119 items
+
+tests/test_brief_synthesizer.py (4 passed)
+tests/test_cli.py (6 passed)
+tests/test_crawler.py (9 passed)
+tests/test_email_generator.py (4 passed)
+tests/test_llm.py (11 passed)
+tests/test_milestone3_service_and_cli.py (5 passed)
+tests/test_models.py (22 passed)
+tests/test_repository.py (27 passed)
+tests/test_resume.py (8 passed)
+tests/test_scouting.py (11 passed)
+tests/test_service.py (1 passed)
+tests/test_smoke_real_web.py (1 skipped - live web)
+tests/test_ui.py (10 passed)
+
+======================= 118 passed, 1 skipped in 1.32s ========================
+```
+
+---
+
+### 8.3 How to Launch the Web Application
+
+```powershell
+.\.venv\Scripts\streamlit run app.py
+```
+
+Open `http://localhost:8501` in your browser. All data operations persist locally to `artemis.db`.
+

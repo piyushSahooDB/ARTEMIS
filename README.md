@@ -14,13 +14,42 @@ A local-first Python agent that empowers university students to scout prospectiv
 
 ---
 
+## Research Intelligence Web Dashboard (Streamlit)
+
+A.R.T.E.M.I.S. includes a local web application built with Streamlit.
+
+### Launching the Dashboard
+
+Ensure your virtual environment is active, then run:
+
+```bash
+streamlit run app.py
+```
+
+The application will launch and bind strictly to `http://localhost:8501`.
+
+### Key Dashboard Views
+
+1. **📊 Overview Dashboard (Section A)**: Real-time SQLite counts (discovered faculty, tracked papers, generated briefs, pending drafts), recent scouting history, recent faculty and publications, and graceful empty states.
+2. **🛰️ Research Scout (Section B)**: Enter an institute faculty directory URL (e.g. `https://homecse.iitd.ac.in/faculty/`), research keywords, and crawler limits. Executes polite crawling and queries academic papers with clear progress feedback.
+3. **🎓 Professor Explorer (Section C)**: Search and filter discovered faculty by name, department, institution, or email verification status (`Verified Official`, `Unverified Scraped`, `No Email Listed`). Direct access to official profile, lab website, and Google Scholar URLs.
+4. **📑 Paper Explorer (Section D)**: Search and filter publications with clear distinction between bibliographic metadata and verified faculty author links. Explicit `[Abstract-Only Available]` boundary notices and persistent DOI / arXiv links.
+5. **🧠 Research Brief Workspace (Section E)**: Select a professor and paper, then synthesize evidence-grounded research briefs. Features prominent `[Abstract-Based Brief]` labels, paper methodology analysis, bounded limitations, matching student résumé evidence, skill gap disclosures, and professor discussion questions.
+6. **✉️ Outreach Draft Review (Section F)**: Review, edit, and audit personalized cold outreach emails. Includes a **Live Automated Quality Control Card** verifying word count ($\le 300$ words), anti-hallucination checks (flagging forbidden phrases like *"as we discussed"* or *"saw your job posting"*), and email deliverability warnings. Edits save directly to SQLite.
+7. **⚙️ Settings & System Status (Section G)**: SQLite database path manager, active LLM provider status (Mock vs. Gemini API with masked keys), crawler User-Agent and politeness configurations, and operational diagnostics.
+
+---
+
 ## Project Structure
 
 ```text
 ARTEMIS/
 ├── .env.example              # Environment configuration template
 ├── .gitignore                # Exclusion rules for local DBs, venvs, and secrets
-├── pyproject.toml            # PEP 517/621 package metadata, dependencies (pypdf, etc.)
+├── .streamlit/               # Streamlit configuration (dark theme, localhost binding)
+│   └── config.toml
+├── app.py                    # Streamlit dashboard entrypoint
+├── pyproject.toml            # PEP 517/621 package metadata, dependencies (streamlit, pypdf)
 ├── README.md                 # Project documentation and quickstart guide
 ├── HANDOFF.md                # Verification findings, edge cases, and handoff report
 ├── src/
@@ -35,7 +64,8 @@ ARTEMIS/
 │       │   ├── paper.py      # Research Paper entity (DOI, arXiv, OpenAlex)
 │       │   ├── resume.py     # ResumeEvidence entity with raw_snippet & UNVERIFIED state
 │       │   ├── brief.py      # ResearchBrief with limitations, gaps, and open questions
-│       │   └── email.py      # EmailDraft entity with draft_pending status & audit trail
+│       │   ├── email.py      # EmailDraft entity with draft_pending status & audit trail
+│       │   └── run.py        # ScoutingRun entity tracking crawler history
 │       ├── db/               # SQLite persistence layer
 │       │   ├── __init__.py
 │       │   ├── connection.py # Connection factory (foreign keys, WAL mode, Row factory)
@@ -61,10 +91,24 @@ ARTEMIS/
 │       ├── email/            # Outreach email drafting
 │       │   ├── __init__.py
 │       │   └── generator.py  # Review-only cold draft generator with safety audits
+│       ├── ui/               # Research Intelligence Dashboard
+│       │   ├── __init__.py
+│       │   ├── theme.py      # Dark navy/charcoal & gold custom CSS
+│       │   ├── state.py      # Session state and repository context manager
+│       │   ├── components/
+│       │   │   └── quality.py# Cold email quality control & anti-hallucination checks
+│       │   └── views/
+│       │       ├── dashboard.py  # Section A: Overview Dashboard
+│       │       ├── scout.py      # Section B: Research Scout
+│       │       ├── professors.py # Section C: Professor Explorer
+│       │       ├── papers.py     # Section D: Paper Explorer
+│       │       ├── briefs.py     # Section E: Research Brief Workspace
+│       │       ├── drafts.py     # Section F: Outreach Draft Review
+│       │       └── settings.py   # Section G: Settings & System Status
 │       └── utils/
 │           ├── __init__.py
 │           └── ids.py        # Prefixed human-readable unique ID generator
-├── tests/                    # Complete pytest suite (106 unit & integration tests)
+├── tests/                    # Complete pytest suite (118 unit & integration tests)
 │   ├── conftest.py           # Shared fixtures (in-memory DB, sample models, fixtures)
 │   ├── test_models.py        # Domain model validation & constraint tests
 │   ├── test_repository.py    # SQLite repository CRUD, junction, and cascade tests
@@ -77,6 +121,7 @@ ARTEMIS/
 │   ├── test_email_generator.py # Cold email draft generation and safety tests
 │   ├── test_cli.py           # CLI argument parsing and error handling tests
 │   ├── test_milestone3_service_and_cli.py # M3 pipeline & CLI integration tests
+│   ├── test_ui.py            # Quality control, word count, anti-hallucination & UI tests
 │   └── test_smoke_real_web.py # Optional real-world university live smoke test
 └── examples/
     └── quickstart.py         # End-to-end runnable foundation demonstration

@@ -426,3 +426,41 @@ class TestRepositoryLookups:
         assert repo.find_paper_by_doi("10.9999/nonexistent") is None
         assert repo.find_paper_by_arxiv_id("9999.99999") is None
         assert repo.find_paper_by_title("Nonexistent Paper Title") is None
+
+
+class TestScoutingRunRepository:
+    def test_create_and_list_scouting_runs(self, repo: ArtemisRepository) -> None:
+        from artemis.models.run import ScoutingRun
+
+        run = repo.create_scouting_run(
+            ScoutingRun(
+                directory_url="https://cs.stanford.edu/faculty",
+                keywords=["distributed", "systems"],
+                faculty_found=5,
+                papers_found=10,
+                status="completed",
+            )
+        )
+        assert run.id.startswith("run_")
+        runs = repo.list_scouting_runs()
+        assert len(runs) == 1
+        assert runs[0].directory_url == "https://cs.stanford.edu/faculty"
+        assert runs[0].faculty_found == 5
+        assert runs[0].papers_found == 10
+        assert runs[0].keywords == ["distributed", "systems"]
+        assert runs[0].status == "completed"
+
+    def test_list_all_briefs(
+        self,
+        repo: ArtemisRepository,
+        sample_professor: Professor,
+        sample_paper: Paper,
+        sample_brief: ResearchBrief,
+    ) -> None:
+        repo.create_professor(sample_professor)
+        repo.create_paper(sample_paper)
+        repo.create_brief(sample_brief)
+
+        briefs = repo.list_briefs()
+        assert len(briefs) == 1
+        assert briefs[0].id == sample_brief.id

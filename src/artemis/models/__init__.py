@@ -10,6 +10,7 @@ from artemis.models.email import EmailDraft, EmailDraftStatus
 from artemis.models.paper import Paper
 from artemis.models.professor import Professor
 from artemis.models.resume import EvidenceCategory, ResumeEvidence
+from artemis.models.run import ScoutingRun
 
 __all__ = [
     "EvidenceCategory",
@@ -19,6 +20,7 @@ __all__ = [
     "Professor",
     "ResearchBrief",
     "ResumeEvidence",
+    "ScoutingRun",
     "SourceProvenance",
     "VerificationStatus",
     "utc_now",

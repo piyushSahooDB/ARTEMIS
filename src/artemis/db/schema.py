@@ -105,6 +105,18 @@ CREATE TABLE IF NOT EXISTS email_drafts (
     updated_at TEXT NOT NULL
 );
 
+-- Scouting run execution history table
+CREATE TABLE IF NOT EXISTS scouting_runs (
+    id TEXT PRIMARY KEY,
+    directory_url TEXT NOT NULL,
+    keywords_json TEXT NOT NULL DEFAULT '[]',
+    faculty_found INTEGER NOT NULL DEFAULT 0,
+    papers_found INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'completed',
+    error_message TEXT,
+    created_at TEXT NOT NULL
+);
+
 -- Indexes for performance and quick searches
 CREATE INDEX IF NOT EXISTS idx_professors_institution ON professors(institution);
 CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi);
@@ -112,6 +124,7 @@ CREATE INDEX IF NOT EXISTS idx_papers_arxiv ON papers(arxiv_id);
 CREATE INDEX IF NOT EXISTS idx_research_briefs_professor ON research_briefs(professor_id);
 CREATE INDEX IF NOT EXISTS idx_email_drafts_professor ON email_drafts(professor_id);
 CREATE INDEX IF NOT EXISTS idx_email_drafts_status ON email_drafts(status);
+CREATE INDEX IF NOT EXISTS idx_scouting_runs_created ON scouting_runs(created_at);
 """
 
 
