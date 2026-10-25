@@ -121,19 +121,32 @@ class MockLLMProvider(LLMProvider):
             sender_name = name_match.group(1).strip() if name_match else "Student"
 
             title_match = re.search(r"TARGET PUBLICATION:.*?-\s*Title:\s*([^\r\n]+)", prompt, flags=re.DOTALL) or re.search(r"Title:\s*([^\n\r]+)", prompt)
-            paper_title = title_match.group(1).strip() if title_match else "Distributed Consensus Replication"
+            paper_title = title_match.group(1).strip() if title_match else "Recent Publication"
+
+            # Extract student's relevant project from evidence block
+            top_ev_title = "academic projects"
+            top_skills = ""
+            if "RELEVANT STUDENT RÉSUMÉ EVIDENCE:" in prompt:
+                ev_part = prompt[prompt.find("RELEVANT STUDENT RÉSUMÉ EVIDENCE:") : prompt.find("TOPICAL INQUIRY")]
+                ev_lines = [l.strip() for l in ev_part.splitlines() if l.strip().startswith("-")]
+                if ev_lines:
+                    first_ev = ev_lines[0].lstrip("- ")
+                    top_ev_title = first_ev.split("(")[0].split(":")[0].strip()
+                    sk_match = re.search(r"\(Skills:\s*([^)]+)\)", first_ev)
+                    if sk_match and sk_match.group(1).strip() != "None specified":
+                        top_skills = f" utilizing {sk_match.group(1).strip()}"
 
             return json.dumps({
                 "subject": f"Undergraduate Research Inquiry: {paper_title[:50]}",
                 "body": (
                     "Dear Professor,\n\n"
-                    f"I recently studied your research on '{paper_title}' and was particularly intrigued by your approach to reducing message complexity in asynchronous networks. "
-                    "In my course project, I implemented a Raft-based distributed key-value store in Go with leader election and persistent log compaction, which gave me firsthand appreciation of the challenges in state machine replication under network partitions.\n\n"
-                    "I am very interested in exploring potential undergraduate research opportunities in your lab to investigate pipelined consensus extensions. Would you be open to a brief conversation if you have availability?\n\n"
+                    f"I recently studied your research on '{paper_title}' and was particularly intrigued by your findings and methodology. "
+                    f"In my project work on '{top_ev_title}'{top_skills}, I engaged with practical challenges closely related to this domain.\n\n"
+                    "I am very interested in exploring potential undergraduate research opportunities in your lab to contribute to extensions of this work. Would you be open to a brief conversation if you have availability?\n\n"
                     "Thank you for your time and research leadership.\n\n"
                     f"Sincerely,\n{sender_name}"
                 ),
-                "rationale": f"Directly links student's Raft KV store project to the professor's paper '{paper_title}', avoiding inflated claims or assumed openings.",
+                "rationale": f"Directly links student's work on '{top_ev_title}' to the professor's paper '{paper_title}', avoiding inflated claims or assumed openings.",
                 "verification_notes": "Referenced paper and student evidence verified against stored records.",
             })
 
@@ -148,18 +161,45 @@ class MockLLMProvider(LLMProvider):
             methodology_text = (
                 "Derived solely from published abstract; full experimental methodology requires manuscript access."
                 if is_abstract_only
-                else "Evaluated via rigorous distributed benchmark simulation."
+                else "Evaluated via rigorous experimental methodology reported in manuscript."
             )
             title_match = re.search(r"PUBLICATION:.*?-\s*Title:\s*([^\r\n]+)", prompt, flags=re.DOTALL) or re.search(r"Title:\s*([^\n\r]+)", prompt)
             paper_title = title_match.group(1).strip() if title_match else "Consensus Protocols in Distributed Networks"
 
-            # Find any evidence IDs in prompt
-            found_ids = re.findall(r"\[ID:\s*([a-zA-Z0-9_-]+)\]", prompt) or re.findall(r"ID:\s*([a-zA-Z0-9_-]+)", prompt)
-            matched_ids = [fid for fid in found_ids if fid.startswith("evid_")]
-            if not matched_ids and "evid_" in prompt:
-                matched_ids = re.findall(r"(evid_[a-zA-Z0-9_]+)", prompt)
-            matched_ids = list(dict.fromkeys(matched_ids))
-            selected_ids = matched_ids[:2]
+            # Extract abstract if present
+            abstract_text = ""
+            abs_match = re.search(r"- Abstract:\s*([^\n\r]+(?:\n[^\n\r]+)*?)(?=\n-[A-Z]|\nSTUDENT|\nTASK)", prompt)
+            if abs_match:
+                abstract_text = abs_match.group(1).strip()
+
+            summary = (
+                abstract_text[:350].strip()
+                if abstract_text and abstract_text != "No abstract available."
+                else f"Investigation and empirical evaluation of methodologies in '{paper_title}'."
+            )
+
+            # Score evidence blocks in prompt by overlap with paper
+            paper_tokens = set(re.findall(r"\w+", (paper_title + " " + abstract_text).lower()))
+            ev_blocks = re.findall(r"-\s*\[ID:\s*(evid_[^\]]+)\]([^\n\r]+(?:\n\s{2,}[^\n\r]+)*)", prompt)
+            scored_ids: list[tuple[int, str]] = []
+            for eid, block in ev_blocks:
+                tokens = set(re.findall(r"\w+", block.lower()))
+                overlap = {
+                    t for t in paper_tokens.intersection(tokens)
+                    if len(t) > 3 and t not in ("this", "that", "with", "from", "using", "have", "more", "built", "designed", "implemented")
+                }
+                if overlap:
+                    scored_ids.append((len(overlap), eid))
+
+            scored_ids.sort(key=lambda x: x[0], reverse=True)
+            selected_ids = [eid for _, eid in scored_ids[:2]]
+            if not selected_ids:
+                # Fallback to any evidence IDs found in prompt
+                found_ids = re.findall(r"\[ID:\s*([a-zA-Z0-9_-]+)\]", prompt) or re.findall(r"ID:\s*([a-zA-Z0-9_-]+)", prompt)
+                matched_ids = [fid for fid in found_ids if fid.startswith("evid_")]
+                if not matched_ids and "evid_" in prompt:
+                    matched_ids = re.findall(r"(evid_[a-zA-Z0-9_]+)", prompt)
+                selected_ids = list(dict.fromkeys(matched_ids))[:2]
 
             alignment = (
                 "Student has practical experience building projects and coursework that directly connect to the paper's focus."
@@ -168,19 +208,26 @@ class MockLLMProvider(LLMProvider):
             )
             conf = 0.85 if selected_ids else 0.30
 
+            # Derive contributions from abstract sentences if available
+            contributions = [
+                f"Presents techniques and experimental results for {paper_title[:50]}.",
+                "Demonstrates empirical evaluation under realistic workload scenarios.",
+            ]
+            if abstract_text and "." in abstract_text:
+                sentences = [s.strip() for s in abstract_text.split(".") if len(s.strip()) > 30]
+                if len(sentences) >= 2:
+                    contributions = [f"{sentences[0]}.", f"{sentences[1]}."]
+
             return json.dumps({
                 "headline": f"{prefix}{paper_title}",
-                "summary": f"This research investigates scalable algorithms to achieve fault-tolerant state-machine replication in {paper_title[:50]}.",
-                "core_contributions": [
-                    "Novel pipelined consensus algorithm reducing message complexity to O(n).",
-                    "Formal safety and liveness invariant proofs under asynchronous communication.",
-                ],
+                "summary": summary,
+                "core_contributions": contributions,
                 "methodology": methodology_text,
                 "potential_alignment": alignment,
                 "matched_evidence_ids": selected_ids,
                 "open_questions": [
-                    "How does the pipelined variant maintain liveness during high-frequency Byzantine leader failures?",
-                    "What are the communication overhead tradeoffs when scaling past 100 geographically distributed nodes?",
+                    f"How does the methodology in '{paper_title[:45]}' scale under challenging real-world deployment constraints?",
+                    "What are the most promising near-term extensions of this work that an undergraduate researcher could explore?",
                 ],
                 "confidence_score": conf,
                 "confidence_notes": (

@@ -32,6 +32,12 @@ COMMON_TECH_SKILLS = [
     "Cryptography", "Operating Systems", "Compilers", "Computer Networks",
     "Computer Architecture", "Algorithms", "Data Structures", "Machine Learning",
     "Deep Learning", "Natural Language Processing", "Computer Vision",
+    "OpenCV", "YOLOv8", "YOLO", "ZED SDK", "BehaviorTree.CPP", "BehaviorTree",
+    "Groot2", "XGBoost", "ROS", "ROS 2", "ROS 2 Humble", "RTABMap", "RViz2",
+    "Gazebo", "Jetson Orin Nano", "Jetson", "ZED2i Camera", "Raspberry Pi",
+    "WebAssembly", "WASM", "WebGPU", "Transformers.js", "Transformers",
+    "DETR", "Florence-2", "ONNX", "ArUco", "Image Segmentation", "Object Detection",
+    "Random Forest", "Isolation Forest", "Time-Series", "Cybersecurity",
 ]
 
 SECTION_PATTERNS: list[tuple[EvidenceCategory, re.Pattern[str]]] = [
@@ -48,18 +54,33 @@ SECTION_PATTERNS: list[tuple[EvidenceCategory, re.Pattern[str]]] = [
         re.compile(r"^(?:#+\s*)?(?:work\s+experience|professional\s+experience|experience|employment|internships?)\b[:\s]*$", re.IGNORECASE),
     ),
     (
+        EvidenceCategory.PROJECT,
+        re.compile(r"^(?:#+\s*)?(?:achievements?|honors?(?:\s+and\s+awards)?|awards?|competitions?|extracurriculars?)\b[:\s]*$", re.IGNORECASE),
+    ),
+    (
         EvidenceCategory.PUBLICATION,
         re.compile(r"^(?:#+\s*)?(?:publications?|preprints?|conference\s+papers?)\b[:\s]*$", re.IGNORECASE),
     ),
     (
         EvidenceCategory.COURSEWORK,
-        re.compile(r"^(?:#+\s*)?(?:relevant\s+coursework|coursework|courses|education(?:\s+and\s+coursework)?)\b[:\s]*$", re.IGNORECASE),
+        re.compile(r"^(?:#+\s*)?(?:relevant\s+coursework|coursework|courses|education(?:\s+and\s+coursework)?|education|academics?)\b[:\s]*$", re.IGNORECASE),
     ),
     (
         EvidenceCategory.TECHNICAL_SKILL,
         re.compile(r"^(?:#+\s*)?(?:technical\s+skills?|skills(?:\s+and\s+tools)?|technologies|core\s+competencies)\b[:\s]*$", re.IGNORECASE),
     ),
 ]
+
+
+def _clean_extracted_text(text: str) -> str:
+    """Normalize unicode replacement chars, bullets, and dashes from PDF extractors."""
+    text = text.replace("\u00a0", " ").replace("\u223c", "~")
+    lines: list[str] = []
+    for line in text.splitlines():
+        cleaned_line = re.sub(r"^(\s*)[\ufffd\x95\u2022\u25cf\u25aa\u25cb\u2043\u2219]+(?:\s+)?", r"\1• ", line)
+        cleaned_line = re.sub(r"(?<=\S)\s*[\ufffd]\s*(?=\S)", " – ", cleaned_line)
+        lines.append(cleaned_line)
+    return "\n".join(lines)
 
 
 def extract_text_from_file(file_path: Union[str, Path]) -> str:
@@ -70,7 +91,7 @@ def extract_text_from_file(file_path: Union[str, Path]) -> str:
 
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        return _extract_text_from_pdf(path)
+        return _clean_extracted_text(_extract_text_from_pdf(path))
 
     # Plain text / Markdown
     try:
@@ -78,7 +99,7 @@ def extract_text_from_file(file_path: Union[str, Path]) -> str:
     except UnicodeDecodeError:
         text = path.read_text(encoding="latin-1", errors="replace")
 
-    cleaned = text.strip()
+    cleaned = _clean_extracted_text(text.strip())
     if not cleaned:
         raise ValueError(f"Resume file is empty: {path}")
     return cleaned
@@ -234,7 +255,28 @@ def _parse_coursework_section(
     section_name: str,
     source_ref: str,
 ) -> list[ResumeEvidence]:
-    """Parse academic coursework into structured evidence items."""
+    """Parse academic coursework or education into structured evidence items."""
+    is_pure_education = "education" in section_name.lower() and "course" not in section_name.lower()
+    if is_pure_education:
+        lines = [l.strip() for l in section_text.splitlines() if l.strip()]
+        degree_line = lines[0] if lines else "University Education"
+        for line in lines:
+            if any(k in line.lower() for k in ("b.tech", "b.e", "b.s", "m.s", "degree", "computer science", "engineering")):
+                degree_line = line.split("—")[0].split("–")[0].strip()
+                break
+        return [
+            ResumeEvidence(
+                category=EvidenceCategory.COURSEWORK,
+                title=f"Education: {degree_line[:80]}",
+                description="; ".join(lines[:3])[:400],
+                skills=extract_skills_from_text(section_text),
+                key_achievements=[f"Academic background: {l}" for l in lines[:3]],
+                source_reference=f"{source_ref} ({section_name})",
+                verification_status=VerificationStatus.UNVERIFIED,
+                raw_snippet=section_text[:400].strip(),
+            )
+        ]
+
     # Split by comma or bullet
     courses: list[str] = []
     for line in section_text.splitlines():
@@ -278,6 +320,21 @@ def _parse_coursework_section(
     ]
 
 
+def _is_entry_heading(line: str, prev_blank: bool) -> bool:
+    s = line.strip()
+    if not s or s.startswith(("-", "•", "*", "+")):
+        return False
+    if s.startswith("#"):
+        return True
+    if "|" in s and len(s) <= 160:
+        return True
+    if re.search(r"\b(?:19|20)\d\d\s*$", s) and len(s) <= 120:
+        return True
+    if prev_blank and len(s) <= 80 and not s.endswith((".", ",", ";", ":")):
+        return True
+    return False
+
+
 def _parse_project_or_experience_section(
     category: EvidenceCategory,
     section_text: str,
@@ -285,20 +342,24 @@ def _parse_project_or_experience_section(
     source_ref: str,
 ) -> list[ResumeEvidence]:
     """Split projects or work experience into discrete evidence records."""
-    # Split by markdown headers or double newlines or clear entry delimiters
     chunks: list[str] = []
     current_chunk: list[str] = []
+    prev_blank = False
 
     for line in section_text.splitlines():
         stripped = line.strip()
-        is_heading = stripped.startswith("#") or (
-            stripped and not stripped.startswith(("-", "•", "*")) and len(stripped) <= 80 and not stripped.endswith((".", ","))
-        )
-        if is_heading and current_chunk:
+        if not stripped:
+            prev_blank = True
+            if current_chunk:
+                current_chunk.append("")
+            continue
+
+        if _is_entry_heading(line, prev_blank) and current_chunk:
             chunks.append("\n".join(current_chunk).strip())
             current_chunk = [line]
         else:
             current_chunk.append(line)
+        prev_blank = False
 
     if current_chunk:
         chunks.append("\n".join(current_chunk).strip())
@@ -325,7 +386,11 @@ def _parse_project_or_experience_section(
         skills = extract_skills_from_text(chunk)
         achievements = [
             l.lstrip("-*• ") for l in desc_lines
-            if any(term in l.lower() for term in ("built", "implemented", "developed", "designed", "achieved", "improved", "reduced", "%", "accuracy", "latency"))
+            if any(term in l.lower() for term in (
+                "built", "implemented", "developed", "designed", "achieved", "improved",
+                "reduced", "handled", "integrated", "diagnosed", "selected", "advanced",
+                "trained", "evaluated", "created", "%", "accuracy", "latency", "cross-validation"
+            ))
         ]
 
         items.append(
