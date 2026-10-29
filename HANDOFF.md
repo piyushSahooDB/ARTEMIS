@@ -1,396 +1,342 @@
-# A.R.T.E.M.I.S. — Milestone 2 Verification & Handoff Report
+# A.R.T.E.M.I.S. — Master Project Handoff & Architecture Guide
+**Autonomous Research Tracking, Exploration, Matching & Intelligent Scouting**
 
-**Date**: October 25, 2026  
-**Status**: Milestone 2 Complete & Validated on Real-World Academic Portals  
-**Test Suite**: 74 Unit Tests Passed (0 Failed, 1 Skipped — Live Web Smoke Test)  
+- **Date**: October 29, 2026
+- **Current Version**: 0.4.0 (Milestones 1–4 Complete)
+- **Repository**: [https://github.com/piyushSahooDB/ARTEMIS](https://github.com/piyushSahooDB/ARTEMIS)
+- **Test Suite Status**: 118 Unit & Integration Tests Passed (0 Failed, 1 Skipped — Live Web Smoke Test)
+- **Primary Runtime Interface**: Local Web Dashboard via Streamlit (`app.py`) + Modular CLI (`artemis`)
 
 ---
 
-## 1. What Was Actually Verified vs. Merely Assumed
+## 1. Executive Summary & Project Purpose
 
-| Dimension | Initial Assumption / Claim | Actual Verified Reality & Resolution |
+**A.R.T.E.M.I.S.** is a local-first Python research assistant built to help university students discover prospective research advisors, comprehend their recent academic publications, connect those papers to authentic qualifications from their résumé, and prepare personalized, review-ready cold email drafts.
+
+### Core Philosophy & Non-Negotiable Constraints
+1. **Local-First & Light**: Everything persists locally in SQLite with WAL mode and foreign key constraints. No external vector databases, microservices, Docker, or heavyweight multi-agent frameworks.
+2. **Strict Anti-Hallucination**: Faculty details, publication records, email addresses, and student qualifications are **never fabricated**. Missing data is left as `None` or explicitly flagged as `UNVERIFIED`.
+3. **Audited Provenance**: Every entity and assertion records source URLs, extraction timestamps, and grounding evidence snippets.
+4. **Review-Only Outreach**: The system only prepares drafts. Emails are **never sent automatically**. The user retains complete manual review and sending control.
+5. **Separation of Relevance and Identity**: Paper relevance to keywords is strictly distinguished from confidence in author identity. Name-only matches without institutional affiliation remain marked uncertain.
+
+---
+
+## 2. System Architecture & Directory Map
+
+```text
+ARTEMIS/
+├── .env.example                  # Environment configuration template
+├── .gitignore                    # Exclusion rules for local DBs, venvs, and secrets
+├── .streamlit/                   # Streamlit configuration (dark theme, localhost binding)
+│   └── config.toml
+├── app.py                        # Streamlit dashboard root entrypoint
+├── pyproject.toml                # PEP 517/621 package metadata & dependencies
+├── README.md                     # High-level overview & quickstart guide
+├── HANDOFF.md                    # This master project handoff document
+├── src/
+│   └── artemis/
+│       ├── __init__.py           # Package exports
+│       ├── cli.py                # Subcommands: scout, ingest-resume, brief, draft, match
+│       ├── service.py            # ArtemisScoutingService orchestration
+│       ├── models/               # Pydantic v2 domain schemas with validation & provenance
+│       │   ├── __init__.py       # Model exports
+│       │   ├── common.py         # VerificationStatus enum and SourceProvenance model
+│       │   ├── professor.py      # Professor entity with email validation and URLs
+│       │   ├── paper.py          # Paper entity (DOI, arXiv, OpenAlex)
+│       │   ├── resume.py         # ResumeEvidence entity with raw_snippet & UNVERIFIED state
+│       │   ├── brief.py          # ResearchBrief with limitations, gaps, and open questions
+│       │   ├── email.py          # EmailDraft entity with draft_pending status & audit trail
+│       │   └── run.py            # ScoutingRun entity tracking crawler history
+│       ├── db/                   # SQLite persistence layer
+│       │   ├── __init__.py
+│       │   ├── connection.py     # Connection factory (foreign keys, WAL mode, Row factory)
+│       │   ├── schema.py         # Relational tables, indexes, and schema migrations
+│       │   └── repository.py     # ArtemisRepository providing CRUD and relational queries
+│       ├── crawler/              # Polite web crawler and university directory parser
+│       │   ├── __init__.py
+│       │   ├── client.py         # PoliteHttpClient with per-domain rate limiting
+│       │   ├── exceptions.py     # Crawler error types (JavaScriptRenderedPageError, etc.)
+│       │   └── faculty_parser.py # Static HTML & specialized university DOM parsers
+│       ├── scouting/             # Bibliographic academic discovery & paper ranking
+│       │   ├── __init__.py
+│       │   ├── clients.py        # OpenAlex, arXiv, and Crossref API clients
+│       │   └── ranker.py         # Paper ranker and author affiliation disambiguation
+│       ├── resume/               # Student résumé ingestion engine
+│       │   ├── __init__.py
+│       │   └── extractor.py      # PDF, TXT, MD parser extracting structured ResumeEvidence
+│       ├── llm/                  # Replaceable LLM interface
+│       │   ├── __init__.py
+│       │   └── provider.py       # LLMProvider, MockLLMProvider, and GeminiLLMProvider
+│       ├── brief/                # Research brief synthesis
+│       │   ├── __init__.py
+│       │   └── synthesizer.py    # Grounded synthesis with abstract labeling & guardrails
+│       ├── email/                # Outreach email drafting
+│       │   ├── __init__.py
+│       │   └── generator.py      # Review-only cold draft generator with safety audits
+│       ├── ui/                   # Research Intelligence Dashboard
+│       │   ├── __init__.py
+│       │   ├── theme.py          # Dark navy/charcoal & gold custom CSS
+│       │   ├── state.py          # Session state and repository context manager
+│       │   ├── components/
+│       │   │   └── quality.py    # Cold email quality control & anti-hallucination checks
+│       │   └── views/
+│       │       ├── dashboard.py  # Section A: Overview Dashboard
+│       │       ├── scout.py      # Section B: Research Scout
+│       │       ├── professors.py # Section C: Professor Explorer
+│       │       ├── papers.py     # Section D: Paper Explorer
+│       │       ├── briefs.py     # Section E: Research Brief Workspace
+│       │       ├── drafts.py     # Section F: Outreach Draft Review
+│       │       └── settings.py   # Section G: Settings & System Status
+│       └── utils/
+│           ├── __init__.py
+│           └── ids.py            # Prefixed human-readable unique ID generator
+├── tests/                        # 119 tests (118 passing, 1 skipped live test)
+│   ├── conftest.py               # Shared fixtures (in-memory DB, sample models, fixtures)
+│   ├── test_models.py            # Domain model validation & constraint tests
+│   ├── test_repository.py        # SQLite repository CRUD, junction, and cascade tests
+│   ├── test_crawler.py           # Polite crawling & directory layout tests
+│   ├── test_scouting.py          # OpenAlex, arXiv, Crossref & ranking tests
+│   ├── test_service.py           # End-to-end faculty scouting pipeline test
+│   ├── test_resume.py            # PDF, Markdown, and TXT résumé parsing tests
+│   ├── test_llm.py               # Mock and Gemini LLM provider tests
+│   ├── test_brief_synthesizer.py # Grounding, abstract labeling & hallucination rejection
+│   ├── test_email_generator.py   # Cold email draft generation and safety tests
+│   ├── test_cli.py               # CLI argument parsing and error handling tests
+│   ├── test_milestone3_service_and_cli.py # M3 pipeline & CLI integration tests
+│   ├── test_ui.py                # Quality control, word count, anti-hallucination & UI tests
+│   └── test_smoke_real_web.py     # Optional real-world university live smoke test
+└── examples/
+    └── quickstart.py             # End-to-end runnable foundation demonstration
+```
+
+---
+
+## 3. Data Models & Database Schema Blueprint
+
+The database is built on SQLite (`artemis.db` by default) with PRAGMA foreign keys enabled and WAL mode active for concurrent reader performance.
+
+```mermaid
+erDiagram
+    PROFESSORS ||--o{ PROFESSOR_PAPERS : "has"
+    PAPERS ||--o{ PROFESSOR_PAPERS : "linked_to"
+    PROFESSORS ||--o{ RESEARCH_BRIEFS : "targeted_in"
+    PAPERS ||--o{ RESEARCH_BRIEFS : "analyzed_in"
+    PROFESSORS ||--o{ EMAIL_DRAFTS : "addressed_to"
+    PAPERS ||--o{ EMAIL_DRAFTS : "references"
+    RESEARCH_BRIEFS ||--o{ EMAIL_DRAFTS : "summarized_by"
+    SCOUTING_RUNS {
+        string id PK
+        string directory_url
+        string keywords_json
+        int faculty_found
+        int papers_found
+        string status
+        string error_message
+        timestamp created_at
+    }
+    RESUME_EVIDENCE {
+        string id PK
+        string category
+        string title
+        string description
+        string skills_json
+        string raw_snippet
+        string verification_status
+        timestamp created_at
+    }
+```
+
+### 1. `professors`
+- Primary key: `id` (e.g. `prof_abc123`).
+- Attributes: `name`, `designation`, `department`, `institution`, `profile_url`, `lab_url`, `google_scholar_url`, `email`, `email_verification_status` (`verified` vs `unverified`), `confidence_score`, `source_url`.
+- Natural key lookups: `(name, institution)` and `email` to guarantee idempotency across repeated runs.
+
+### 2. `papers`
+- Primary key: `id` (e.g. `paper_xyz789`).
+- Attributes: `professor_id` (nullable FK), `title`, `abstract`, `year`, `venue`, `doi`, `arxiv_id`, `url`, `source_type` (`openalex`, `arxiv`, `crossref`), `author_verified` (boolean), `match_score` (float), `authors_json`.
+- Unique business identifiers: deduplicated by `doi`, `arxiv_id`, and normalized `title`.
+
+### 3. `professor_papers`
+- Junction table linking `professor_id` and `paper_id` with composite primary key `(professor_id, paper_id)`.
+- Enforces `ON DELETE CASCADE` on both foreign keys.
+
+### 4. `resume_evidence`
+- Primary key: `id` (e.g. `ev_mno456`).
+- Attributes: `category` (`project`, `skill`, `coursework`, `research`, `experience`), `title`, `description`, `skills_json`, `key_achievements_json`, `raw_snippet`, `verification_status` (defaults strictly to `unverified`).
+
+### 5. `research_briefs`
+- Primary key: `id` (e.g. `brief_qrs123`).
+- Foreign keys: `paper_id` -> `papers.id` (CASCADE), `professor_id` -> `professors.id` (CASCADE).
+- Attributes: `research_problem`, `methodology`, `key_contribution`, `limitations`, `relevant_skills_and_projects`, `potential_gaps`, `suggested_questions_json`, `matched_evidence_ids_json`, `alignment_confidence`, `is_abstract_only` (boolean).
+
+### 6. `email_drafts`
+- Primary key: `id` (e.g. `draft_tuv789`).
+- Foreign keys: `brief_id`, `professor_id`, `paper_id`.
+- Attributes: `recipient_name`, `recipient_email`, `subject`, `body`, `status` (`draft_pending`, `reviewed`), `gmail_draft_id`, `audit_trail_json`, `created_at`, `updated_at`.
+
+### 7. `scouting_runs`
+- Primary key: `id` (e.g. `run_hij345`).
+- Attributes: `directory_url`, `keywords_json`, `faculty_found`, `papers_found`, `status` (`completed`, `failed`), `error_message`, `created_at`.
+
+---
+
+## 4. Milestone Verification History
+
+### Milestone 1: Project Foundation & Architecture
+- Initialized Pydantic v2 domain schemas with strict validation and provenance tracking.
+- Implemented SQLite repository with connection pooling, index optimization, cascade deletions, and automated schema migrations.
+- Configured modular packaging with PEP 517/621 (`pyproject.toml`) and pytest suite.
+
+### Milestone 2: Faculty Discovery & Academic Paper Scouting
+- Built polite crawler adhering to `robots.txt`, enforcing per-domain rate limiting (minimum 0.5s interval), request timeouts, and transparent User-Agent identification.
+- Designed HTML faculty parsers supporting table layouts, card grids, WordPress Elementor containers, and HTML5 data attribute deobfuscation.
+- Created OpenAlex, arXiv, and Crossref API clients. Implemented paper ranker separating keyword relevance from author affiliation confidence.
+- **Validated on Real-World Indian Universities**:
+  - **IIT Delhi CSE** (`https://homecse.iitd.ac.in/faculty/`): Elementor cards; 3 faculty parsed, 3 official emails found, 6 papers retrieved.
+  - **IIT Madras CSE** (`https://www.cse.iitm.ac.in/outerfaculty.php`): HTML5 data-attribute grid; deobfuscated `data-mail="name[at]cse[dot]iitm[dot]ac[dot]in"`, 3 faculty found, 6 papers retrieved.
+  - **IIT Bombay CSE** (`https://www.cse.iitb.ac.in/people/faculty.php`): Client-side Angular SPA (`<app-root>`); detected and raised `JavaScriptRenderedPageError` without hallucinating faculty.
+  - **IIT Kanpur CSE** (`https://www.cse.iitk.ac.in/pages/Faculty.html`): Bootstrap grid with unlisted emails; 39 faculty extracted, emails left as `None` without guessing.
+  - **Idempotency Verified**: Multiple sequential runs update existing records without generating duplicate rows.
+
+### Milestone 3: Résumé Ingestion, Grounded Briefs & Review Drafts
+- Implemented multi-format résumé ingestion (`.pdf` via `pypdf`, `.md`, `.txt`) extracting structured claims marked `unverified`.
+- Introduced `LLMProvider` interface with offline deterministic `MockLLMProvider` and REST-based `GeminiLLMProvider`.
+- Developed `ResearchBriefSynthesizer` with mandatory abstract labeling, strict evidence validation (rejecting fabricated evidence IDs), and honest skill gap reporting.
+- Developed `DraftGenerator` generating concise, grounded cold email drafts (status strictly `draft_pending`) with forbidden familiarity phrase filtering.
+
+### Milestone 4: Research Intelligence Dashboard (Streamlit Web App)
+- Developed a local web application (`app.py`) binding to `localhost:8501`.
+- Styled in dark navy/charcoal (`#0e1117`, `#161b22`) with muted gold accenting (`#e6af2e`).
+- Implemented 7 full-featured views:
+  1. **Dashboard**: Metrics banner, recent scouting runs, recent faculty & papers, graceful empty states.
+  2. **Research Scout**: Interactive search form, live execution spinner, and direct entity persistence.
+  3. **Professor Explorer**: Search, email verification filters, official profile/lab links, and affiliated publications.
+  4. **Paper Explorer**: Bibliographic search, author identity confidence badges, abstract viewer, and persistent DOI/arXiv links.
+  5. **Research Brief Workspace**: Grounded synthesis linking papers to résumé evidence, textual limitations, gap disclosure, and suggested questions.
+  6. **Outreach Draft Review**: Editable subject and body (`st.text_area`), live Quality Control card (word count, anti-hallucination scanner, deliverability notices), and SQLite update action.
+  7. **Settings & Status**: Database switcher, table counts, LLM provider diagnostics, crawler User-Agent info, and launch instructions.
+
+---
+
+## 5. Anti-Hallucination & Quality Assurance Architecture (The Core Moat)
+
+A.R.T.E.M.I.S. is engineered around fail-closed anti-hallucination guardrails:
+
+| Potential Failure Mode | Guardrail in Code | Location |
 |---|---|---|
-| **Crawler User-Agent** | Assumed standard agent was active. | Initial default was a placeholder string (`github.com/artemis-agent; mailto:artemis-scout@example.edu`). **Fixed**: Replaced with polite, honest identity pointing to repository (`https://github.com/piyushSahooDB/ARTEMIS`) and user-configurable via `ARTEMIS_CONTACT_EMAIL` or `ARTEMIS_USER_AGENT` environment variables. |
-| **Email Verification** | Displaying `[verified]` implied deliverability or confirmed active inbox. | Merely scraping an email from HTML proves it was published on that page; it does **not** prove SMTP deliverability or mailbox responsiveness. **Fixed**: Updated model docstrings and CLI labels to `[listed on official page; deliverability unverified]`. ARTEMIS never tests SMTP or pings mail servers. |
-| **Paper Author Confidence** | Publication match marked `VERIFIED AFFILIATION` with `1.00` confidence could be mistaken for biometric identity proof. | Author match is bibliometric metadata comparison. An affiliation match indicates high confidence (`1.00`), but name-only matches without affiliation must remain `UNCERTAIN (Name-Only Match)` with confidence `0.40`. **Fixed**: Clarified semantics and terminal labels. |
-| **Indian Institute Parsing** | Assumed standard Western `div.faculty-card` or `table` selectors were sufficient. | Indian institutes use varied DOM architectures: IIT Delhi uses WordPress/Elementor (`div.single-team-area`), IIT Madras uses custom HTML5 data-attribute cards (`div.fac-card` with `data-mail="name[at]cse[dot]iitm[dot]ac[dot]in"`), and IIT Bombay is a client-side Angular SPA (`<app-root>`). **Fixed**: Added support for Elementor cards, HTML5 data attributes, email deobfuscation, and Angular SPA detection. |
-| **Institution Domain Extraction** | Assumed splitting hostname by dots (`parts[-2].capitalize()`) would derive the university name. | On country-code second-level domains (`.ac.in`, `.ac.uk`), `parts[-2]` is `"ac"`, producing `"Ac University"`! This broke downstream OpenAlex affiliation matching. **Fixed**: Implemented canonical domain mappings (`iitd` → `"Indian Institute of Technology Delhi"`, `iitm` → `"Indian Institute of Technology Madras"`, etc.) and added an optional `-i / --institution` CLI override. |
-| **SQLite Idempotency** | Assumed re-running scouting would update existing database records. | Because Pydantic models generate a fresh UUID on every run, `repo.get_professor(prof.id)` never matched existing records, inserting duplicates on every run (run 1: 3 profs; run 2: 6 profs). **Fixed**: Added repository lookups by business keys (`(name, institution)`, `email`, `DOI`, `arXiv ID`, `title`) to ensure true idempotency. |
+| **Hallucinated Paper Methodology** | When full manuscript text is absent, briefs are prominently labeled `[Abstract-Based Brief]` and methodologies are strictly bounded to abstract statements. | `src/artemis/brief/synthesizer.py` |
+| **Hallucinated Student Evidence** | Synthesis output is audited against `valid_evidence_map`. Any IDs not in the database are discarded. | `src/artemis/brief/synthesizer.py` |
+| **Overstated Alignment on Weak Evidence** | When zero genuine evidence claims match, confidence is forced to $\le 0.35$ and explicit skill gaps are recorded. | `src/artemis/brief/synthesizer.py` |
+| **Invented Prior Familiarity** | Regex scans body and subject for forbidden phrases (`"as we discussed"`, `"per our conversation"`, `"saw your job posting"`, `"in your lecture"`). | `src/artemis/ui/components/quality.py` & `src/artemis/email/generator.py` |
+| **Unverified Professor Email** | Flags explicit warnings (`[listed on official page; deliverability unverified]`), warns on placeholder domains (`@example.com`), and never pings mailboxes. | `src/artemis/ui/components/quality.py` |
+| **Unbounded Email Length** | Flags drafts exceeding 300 words with length warnings (optimal: 120–220 words). | `src/artemis/ui/components/quality.py` |
+| **Client-Side SPA Hallucination** | Raises `JavaScriptRenderedPageError` when discovering client-side SPAs (Angular/React) rather than scraping empty templates or inventing faculty. | `src/artemis/crawler/faculty_parser.py` |
+| **Unintentional Email Sending** | Drafts are stored strictly as `draft_pending`. The system contains zero SMTP or automatic transmission mechanisms. | `src/artemis/models/email.py` |
 
 ---
 
-## 2. Bugs & Misleading Claims Found and Fixed
+## 6. How to Run & Operate A.R.T.E.M.I.S.
 
-1. **Crawler Identity Discrepancy**:
-   - *Issue*: Crawler identified itself with nonexistent `artemis-agent` GitHub account and `artemis-scout@example.edu` contact.
-   - *Fix*: Created `get_default_user_agent()` in `src/artemis/crawler/client.py` using repository origin `https://github.com/piyushSahooDB/ARTEMIS` and optional environment variable `ARTEMIS_CONTACT_EMAIL`.
-2. **Domain Parsing Bug (`"Ac University"` issue)**:
-   - *Issue*: `homecse.iitd.ac.in` domain was parsed as `parts[-2] = "ac"`, producing `"Ac University"`. When OpenAlex returned `"Indian Institute of Technology Delhi"`, ARTEMIS falsely reported affiliation mismatch.
-   - *Fix*: Added `KNOWN_INSTITUTION_DOMAINS` dictionary in `src/artemis/crawler/faculty_parser.py` covering major Indian IITs, NITs, IISc, IIITs, BITS, and global universities, plus robust ccTLD domain suffix handling.
-3. **Greedy Regex Navigation Capture**:
-   - *Issue*: Scanning HTML headers for `[A-Za-z\s]+(?:University|Institute of Technology)` greedily captured skip links like `Skip to content Computer Science and Engineering Indian Institute of Technology`.
-   - *Fix*: Prioritized canonical domain lookup over raw header scraping and tightened pattern boundaries with `\b(Indian Institute of Technology\s+[A-Z][a-z]+|National Institute of Technology\s+[A-Z][a-z]+)\b`.
-4. **Repeated Runs Duplicate Records**:
-   - *Issue*: Scouting the same directory twice duplicated rows in `professors`, `papers`, and `professor_papers`.
-   - *Fix*: Added `find_professor_by_email`, `find_professor_by_name`, `find_paper_by_doi`, `find_paper_by_arxiv_id`, and `find_paper_by_title` in `ArtemisRepository`. In `_persist_professor_and_papers`, existing IDs and creation timestamps are preserved, updating records cleanly.
-5. **Overstated Verification Labeling**:
-   - *Issue*: Terminal output printed `[verified]` for emails, which users could misinterpret as deliverability verification.
-   - *Fix*: Changed label to `[listed on official page; deliverability unverified]`, and paper matches to `[AFFILIATION MATCHED IN METADATA]` vs `[UNCERTAIN (Name-Only Match)]`.
-
----
-
-## 3. Exact Test Results
-
-### 3.1 Unit & Integration Test Suite
-
-**Execution Command**:
+### 6.1 Setup Virtual Environment
 ```powershell
-.\.venv\Scripts\pytest -v
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .[dev]
+cp .env.example .env
 ```
 
-**Output**:
-```text
-============================= test session starts =============================
-platform win32 -- Python 3.10.9, pytest-9.1.1, pluggy-1.7.0 -- C:\Users\PIYUSH\Desktop\ARTEMIS\.venv\Scripts\python.exe
-cachedir: .pytest_cache
-rootdir: C:\Users\PIYUSH\Desktop\ARTEMIS
-configfile: pyproject.toml
-testpaths: tests
-plugins: anyio-4.15.1
-collecting ... collected 75 items
-
-tests/test_cli.py (6 passed)
-tests/test_crawler.py (9 passed)
-tests/test_models.py (22 passed)
-tests/test_repository.py (25 passed)
-tests/test_scouting.py (11 passed)
-tests/test_service.py (1 passed)
-tests/test_smoke_real_web.py (1 skipped - requires RUN_LIVE_TESTS=1)
-
-======================== 74 passed, 1 skipped in 0.47s ========================
-```
-
-### 3.2 Real-World Live Verification: IIT Delhi CSE
-
-- **Target URL**: `https://homecse.iitd.ac.in/faculty/`
-- **Page Layout**: WordPress Elementor (`div.single-team-area`)
-- **Keywords**: `systems`, `algorithms`
-- **Command**:
-  ```powershell
-  .\.venv\Scripts\python.exe -m artemis scout https://homecse.iitd.ac.in/faculty/ -k "systems" "algorithms" -f 3 -p 2 --db artemis_iitd_live.db
-  ```
-- **Results**:
-  - **Faculty Discovered**: 3 (S.N. Maheshwari, Amit Kumar, Aaditeshwar Seth)
-  - **Emails Discovered**: 3 / 3 (`snm@cse.iitd.ac.in`, `amitk@cse.iitd.ac.in`, `aseth@cse.iitd.ac.in`)
-  - **Profile Subpages Parsed**: 3 (`https://homecse.iitd.ac.in/team/...`)
-  - **Papers Retrieved**: 6 papers from OpenAlex and arXiv
-  - **Affiliation Grounding**:
-    - Aaditeshwar Seth: 2 papers matched with `"Indian Institute of Technology Delhi"` metadata (`confidence: 1.00`).
-    - Amit Kumar: 2 papers matched, 1 on arXiv (`confidence: 0.40 [UNCERTAIN]`, correctly recognizing missing affiliation metadata on preprint).
-  - **Ground Truth Spot-Check**: Matches official directory records on `homecse.iitd.ac.in`.
-
-### 3.3 Real-World Live Verification: IIT Madras CSE
-
-- **Target URL**: `https://www.cse.iitm.ac.in/outerfaculty.php`
-- **Page Layout**: Custom HTML5 card grid (`div.fac-card` with data attributes)
-- **Keywords**: `cryptography`, `security`
-- **Command**:
-  ```powershell
-  .\.venv\Scripts\python.exe -m artemis scout https://www.cse.iitm.ac.in/outerfaculty.php -k "cryptography" "security" -f 3 -p 2 --db artemis_iitm_live.db
-  ```
-- **Results**:
-  - **Faculty Discovered**: 3 (Aishwarya Thiruvengadam, Ashrujit Ghoshal, Chester Rebeiro)
-  - **Emails Discovered**: 3 / 3 (successfully deobfuscated `[at]` and `[dot]` into `aishwarya@cse.iitm.ac.in`, `ashrujit@cse.iitm.ac.in`, `chester@cse.iitm.ac.in`)
-  - **Links Discovered**: Profile links and personal/lab homepages (`https://sites.google.com/view/aishwaryat`, `https://cse.iitm.ac.in/~ashrujit/`, `https://cse.iitm.ac.in/~chester/`)
-  - **Papers Retrieved**: 6 papers from OpenAlex and arXiv
-  - **Affiliation Grounding**:
-    - Aishwarya Thiruvengadam: Top paper confirmed with IIT Madras metadata (`confidence: 1.00`); earlier 2018 CCS paper from UC Santa Barbara postdoc correctly flagged as `[UNCERTAIN]` (`confidence: 0.40`).
-    - Ashrujit Ghoshal: Both IEEE S&P and LNCS papers confirmed with IIT Madras metadata (`confidence: 1.00`).
-    - Chester Rebeiro: Both IACR TCHES and arXiv papers confirmed with IIT Madras metadata (`confidence: 1.00`).
-
-### 3.4 Client-Side SPA Handling: IIT Bombay CSE
-
-- **Target URL**: `https://www.cse.iitb.ac.in/people/faculty.php`
-- **Page Structure**: Client-side Angular Single Page Application (`<app-root></app-root>`)
-- **Behavior**:
-  - ARTEMIS detected empty Angular component root with no server-rendered text.
-  - Raised `JavaScriptRenderedPageError` with clear diagnostic:
-    ```text
-    [ERROR] JavaScript-Rendered Directory Detected:
-      Directory page 'https://www.cse.iitb.ac.in/people/faculty.php' requires client-side
-      JavaScript execution (Single Page Application). ARTEMIS currently supports server-rendered
-      HTML to prevent hallucination.
-    ```
-  - **Verification**: Zero fabricated data was generated.
-
-### 3.5 Missing Emails Handling: IIT Kanpur CSE
-
-- **Target URL**: `https://www.cse.iitk.ac.in/pages/Faculty.html`
-- **Page Structure**: Bootstrap grid (`div.team-grid`) with names and titles, but no emails published on summary cards.
-- **Behavior**:
-  - 39 faculty members extracted.
-  - Email addresses left as `None` with status `UNVERIFIED` / `[Not publicly listed on directory / unverified]`.
-  - **Verification**: Zero fabricated or guessed emails were generated.
-
-### 3.6 Idempotency Verification Across Repeated Runs
-
-- **Command**: Ran `artemis scout https://www.cse.iitm.ac.in/outerfaculty.php -k "cryptography" -f 2 -p 2 --db artemis_test_idempotency.db` twice sequentially.
-- **Run 1 Database State**: `professors=2, papers=4, links=4`
-- **Run 2 Database State**: `professors=2, papers=4, links=4`
-- **Result**: Zero duplicates created; existing entities updated cleanly.
-
----
-
-## 4. Commands to Reproduce Verification Tests
-
-### Run Full Pytest Suite
+### 6.2 Launch the Web Dashboard
 ```powershell
-.\.venv\Scripts\pytest -v
+streamlit run app.py
+```
+Open `http://localhost:8501` in your browser.
+
+### 6.3 Run the Full Test Suite
+```powershell
+pytest -v
+```
+All 118 unit & integration tests run offline without network access in under 1.5 seconds.
+
+### 6.4 CLI Commands Reference
+
+#### 1. Ingest Student Résumé
+```powershell
+artemis ingest-resume ./student_cv.pdf --db artemis.db
 ```
 
-### Reproduce Live Test 1: IIT Delhi CSE
+#### 2. Scout University Faculty & Research Papers
 ```powershell
-.\.venv\Scripts\python.exe -m artemis scout https://homecse.iitd.ac.in/faculty/ -k "systems" "algorithms" -f 3 -p 2 --db artemis_iitd_live.db
+artemis scout https://homecse.iitd.ac.in/faculty/ -k "systems" "algorithms" -f 5 -p 3 --db artemis.db
 ```
 
-### Reproduce Live Test 2: IIT Madras CSE
+#### 3. Synthesize Grounded Research Brief
 ```powershell
-.\.venv\Scripts\python.exe -m artemis scout https://www.cse.iitm.ac.in/outerfaculty.php -k "cryptography" "security" -f 3 -p 2 --db artemis_iitm_live.db
+artemis brief --prof prof_sn_maheshwari --paper paper_approx_graph --db artemis.db
 ```
 
-### Reproduce SPA Detection Test: IIT Bombay CSE
+#### 4. Generate Review-Only Outreach Draft
 ```powershell
-.\.venv\Scripts\python.exe -m artemis scout https://www.cse.iitb.ac.in/people/faculty.php -k "systems"
+artemis draft --prof prof_sn_maheshwari --brief brief_123 --name "Student Researcher" --db artemis.db
+```
+
+#### 5. Run Unified Scouting & Matching Pipeline
+```powershell
+artemis match https://homecse.iitd.ac.in/faculty/ -r ./student_cv.pdf -k "compilers" "systems" -f 3 --name "Student Researcher" --db artemis.db
 ```
 
 ---
 
-## 5. Milestone 2 Completion Summary
+## 7. Configuration & Environment Variables
 
-- **Milestone 2 Status**: Completed and verified on real-world Indian institute faculty directories (IIT Delhi, IIT Madras, IIT Bombay, IIT Kanpur).
-- **Test Baseline**: 74 unit tests passed, 1 skipped.
+Key settings configured in `.env`:
 
----
-
-## 6. Milestone 3 Implementation & Verification Report
-
-**Date**: October 25, 2026  
-**Status**: Milestone 3 Complete & Fully Validated Offline  
-**Test Suite**: 106 Unit Tests Passed (0 Failed, 1 Skipped — Live Web Smoke Test)  
-
-### 6.1 What Was Implemented in Milestone 3
-
-1. **Student Résumé Ingestion (`artemis.resume`)**:
-   - `extract_text_from_file`: Robust extraction supporting `.pdf` (via `pypdf`), `.md`, and `.txt` with UTF-8 and Latin-1 fallbacks.
-   - `parse_resume_evidence`: Heuristic extraction into structured `ResumeEvidence` models with `skills`, `key_achievements`, exact `raw_snippet`, and strict initial `UNVERIFIED` status (self-reported claims).
-   - Skips contact headers and email addresses to avoid mistaking personal metadata for project titles.
-2. **Replaceable LLM Interface (`artemis.llm`)**:
-   - `LLMProvider` abstract interface with `generate()` and `generate_structured(schema: Type[T])`.
-   - `MockLLMProvider`: Deterministic, offline heuristic generator capable of extracting paper titles, evidence IDs, and sender names from structured prompts. Enables zero-cost, network-free, reproducible testing.
-   - `GeminiLLMProvider`: Lightweight REST client calling Google Generative Language API (`gemini-2.0-flash`) via `httpx` with `GEMINI_API_KEY`.
-   - `get_llm_provider()`: Factory dynamically selecting provider based on `ARTEMIS_LLM_PROVIDER` environment variable.
-3. **Research Brief Synthesis & Grounding Guardrails (`artemis.brief`)**:
-   - `ResearchBriefSynthesizer`: Connects discovered papers with authentic student qualifications.
-   - **Abstract-Only Safety**: When full paper manuscript is absent, brief headline is strictly prefixed with `[Abstract-Based Brief]` and methodology/limitations explicitly state derivation from abstract text. Prevents fabricating experimental benchmarks or participant numbers.
-   - **Fabricated Claim Rejection**: Verifies returned `matched_evidence_ids` against genuine student evidence. Discards hallucinated IDs.
-   - **Uncertainty Reflection**: When zero genuine evidence matches, forces confidence score `<= 0.35` and records explicit background gaps.
-   - **Deterministic Fallback**: Automatically activates keyword-based heuristic fallback if LLM service fails or outputs malformed non-JSON text.
-4. **Cold Outreach Email Draft Generator (`artemis.email`)**:
-   - `DraftGenerator`: Connects brief and evidence to a single publication.
-   - **Review-First Stance**: Status is set strictly to `draft_pending`. Emails are never sent automatically.
-   - **Forbidden Phrase Filtering**: Scans and sanitizes fabricated prior interactions (`"as we discussed"`, `"enjoyed your class"`) or phantom openings (`"saw your posting"`).
-   - **Recipient Email Safety**: If professor email is unverified or missing from the directory, generates a safe review placeholder and flags an explicit audit warning.
-   - **Word Count Discipline**: Trims drafts exceeding 300 words to ensure respectful brevity.
-5. **Database Schema & Migrations (`artemis.db`)**:
-   - Updated `resume_evidence` table with `raw_snippet` and `verification_status`.
-   - Updated `research_briefs` table with `limitations_json` and `gaps_json`.
-   - Backward-compatible SQLite table migration checks added to `init_db`.
-6. **CLI Subcommands & Pipeline (`artemis.cli`)**:
-   - `artemis ingest-resume <file>`: Ingests résumé and persists evidence.
-   - `artemis brief --prof <ID> --paper <ID>`: Synthesizes and displays research brief.
-   - `artemis draft --prof <ID> --brief <ID> [--name SENDER_NAME]`: Generates formatted outreach draft.
-   - `artemis match <URL> -r <FILE> -k <KEYWORDS...>`: Complete automated scouting, matching, and drafting pipeline.
-
----
-
-### 6.2 Exact Pytest Results
-
-**Execution Command**:
-```powershell
-.\.venv\Scripts\pytest -v
-```
-
-**Output**:
-```text
-============================= test session starts =============================
-platform win32 -- Python 3.10.9, pytest-9.1.1, pluggy-1.7.0 -- C:\Users\PIYUSH\Desktop\ARTEMIS\.venv\Scripts\python.exe
-cachedir: .pytest_cache
-rootdir: C:\Users\PIYUSH\Desktop\ARTEMIS
-configfile: pyproject.toml
-testpaths: tests
-plugins: anyio-4.15.1
-collecting ... collected 107 items
-
-tests/test_brief_synthesizer.py (4 passed)
-tests/test_cli.py (6 passed)
-tests/test_crawler.py (9 passed)
-tests/test_email_generator.py (4 passed)
-tests/test_llm.py (11 passed)
-tests/test_milestone3_service_and_cli.py (5 passed)
-tests/test_models.py (22 passed)
-tests/test_repository.py (25 passed)
-tests/test_resume.py (8 passed)
-tests/test_scouting.py (11 passed)
-tests/test_service.py (1 passed)
-tests/test_smoke_real_web.py (1 skipped - requires RUN_LIVE_TESTS=1)
-
-======================= 106 passed, 1 skipped in 0.99s ========================
-```
-
----
-
-### 6.3 Anti-Hallucination & Grounding Guardrails Verification Matrix
-
-| Risk / Failure Mode | Safety Guardrail in Code | Test Verification |
+| Variable | Default | Purpose |
 |---|---|---|
-| **Hallucinated Paper Methodology** | Abstract-only papers are strictly tagged `[Abstract-Based Brief]`. Methodology must note abstract origin. | `test_synthesize_abstract_only_paper_enforces_labeling` |
-| **Hallucinated Student Evidence IDs** | `_apply_grounding_guardrails` verifies all returned IDs against ingested `valid_evidence_map`. Fabricated IDs are stripped. | `test_reject_fabricated_evidence_ids` |
-| **Overconfident Matching on Unrelated Evidence** | When zero genuine evidence items match, confidence is forced to `<= 0.35` and background gaps are populated. | `test_missing_or_unrelated_evidence_returns_uncertainty` |
-| **Malformed LLM Output / Non-JSON** | `_deterministic_fallback_synthesis` keyword matcher generates grounded brief without crashing. | `test_deterministic_fallback_on_malformed_llm_json` |
-| **Invented Prior Relationships or Openings** | `FORBIDDEN_PHRASES` regex filters out "as we discussed", "saw your posting", etc. | `test_forbids_hallucinated_prior_contact_phrases` |
-| **Unverified Professor Email** | Flags audit warning and uses safe placeholder to prevent accidental blind sending. | `test_unverified_missing_email_generates_safety_warning` |
-| **Automated Email Transmission** | Draft status is strictly `draft_pending`. No SMTP or external sending mechanism exists. | `test_synthesize_brief_and_generate_draft_end_to_end` |
+| `ARTEMIS_DB_PATH` | `artemis.db` | Local SQLite database file path. |
+| `ARTEMIS_LLM_PROVIDER` | `mock` | Active LLM interface (`mock` for deterministic offline testing, `gemini` for live API). |
+| `GEMINI_API_KEY` | *(None)* | Google Gemini API key (required only if `ARTEMIS_LLM_PROVIDER=gemini`). |
+| `ARTEMIS_CONTACT_EMAIL` | *(None)* | User email address embedded into crawler HTTP User-Agent. |
+| `ARTEMIS_USER_AGENT` | Standard polite string | Complete override for crawler HTTP User-Agent header. |
+| `STREAMLIT_SERVER_PORT` | `8501` | Local port for Streamlit web application. |
+| `STREAMLIT_SERVER_ADDRESS`| `localhost` | Binding interface (strictly localhost to prevent external access). |
 
 ---
 
-### 6.4 Commands to Reproduce Milestone 3 Verification
+## 8. Known Limitations & Edge Cases
 
-#### 1. Run Complete Pytest Suite
-```powershell
-.\.venv\Scripts\pytest -v
-```
-
-#### 2. Run Résumé Ingestion CLI
-```powershell
-.\.venv\Scripts\python.exe -m artemis ingest-resume tests/fixtures/sample_resume.md --db test.db
-```
-
-#### 3. Run End-to-End Synthesis and Drafting
-```powershell
-.\.venv\Scripts\python.exe -m artemis match https://www.cse.iitm.ac.in/outerfaculty.php -r ./my_resume.md -k "systems" "security" -f 2 --name "Student Researcher"
-```
+1. **JavaScript-Rendered Faculty Directories**:
+   - Institute portals rendered entirely via client-side JavaScript (e.g. Angular on `cse.iitb.ac.in`) cannot be parsed by standard HTTP scrapers without a headless browser. ARTEMIS raises `JavaScriptRenderedPageError` to prevent hallucinating data.
+   - *Future Solution*: Integrate optional Playwright headless browser rendering for SPA directories.
+2. **Preprint Author Affiliation Ambiguity**:
+   - Preprints (e.g. on arXiv) often lack structured author affiliation metadata in their OAI-PMH feeds. When affiliation is missing, ARTEMIS marks the link as `[UNCERTAIN (Name-Only Match)]` with confidence score `0.40`.
+3. **Abstract-Only Publications**:
+   - When a paper is paywalled or has no open-access full text, ARTEMIS operates strictly on the abstract. It labels the brief as `[Abstract-Based Brief]` and does not extrapolate experimental metrics.
+4. **Email Deliverability**:
+   - Scraping an email address proves only that it appeared on a public web page. ARTEMIS never tests SMTP handshakes or sends ping packets, and marks scraped addresses as `[listed on official page; deliverability unverified]`.
 
 ---
 
-## 8. Milestone 4 Implementation & Verification Report
+## 9. Future Roadmap & Extension Points (Milestone 5+)
 
-**Date**: October 26, 2026  
-**Status**: Milestone 4 Complete — Research Intelligence Dashboard Built & Tested  
-**Test Suite**: 118 Unit & Integration Tests Passed (0 Failed, 1 Skipped — Live Web Smoke Test)  
-
----
-
-### 8.1 Summary of Implemented Features
-
-1. **Local Streamlit Web Application (`app.py`)**:
-   - Single root entrypoint launched via `streamlit run app.py`.
-   - Binds strictly to `localhost:8501` (no public exposure, CORS and XSRF configured).
-   - Polished dark navy / charcoal design system (`#0e1117`, `#161b22`, border `#30363d`) with muted gold accent (`#e6af2e`).
-   - Modular navigation across 7 specialized application sections.
-
-2. **Section A — Overview Dashboard (`artemis.ui.views.dashboard`)**:
-   - Real-time aggregated metrics from local SQLite: Discovered Faculty, Tracked Publications, Research Briefs, and Pending Review Drafts.
-   - Recent Scouting Runs table with status badges (`COMPLETED` / `FAILED`), directory URL, keyword tags, and error diagnostics.
-   - Recently discovered faculty cards with email badges and recently tracked papers with match scores.
-   - Graceful empty states with actionable callouts when database is fresh.
-
-3. **Section B — Research Scout (`artemis.ui.views.scout`)**:
-   - Search & crawl interface taking university faculty directory URL, research keywords, max faculty, and max papers sliders.
-   - Synchronous polite execution with spinner feedback.
-   - Direct persistence of discovered entities and automated logging to `scouting_runs` table.
-   - Clear error reporting for JavaScript-only SPAs or network failures without hallucinating faculty.
-
-4. **Section C — Professor Explorer (`artemis.ui.views.professors`)**:
-   - Searchable by name, department, institution, or research focus.
-   - Filterable by email verification status (`Verified Official Only`, `With Email Only`, `No Email Listed`).
-   - Expander card views displaying verified profile links, lab websites, Google Scholar URLs, source provenance, and associated papers.
-   - One-click navigation to synthesize research briefs for any faculty member.
-
-5. **Section D — Paper Explorer (`artemis.ui.views.papers`)**:
-   - Searchable across title, authors, and abstract text.
-   - Filterable by source platform (OpenAlex, arXiv) and minimum relevance score.
-   - Clear distinction between bibliographic metadata and verified faculty author identity.
-   - Explicit `[Abstract-Only Available]` boundary indicator to prevent hallucinated full-text methodologies.
-   - Persistent clickable links for DOI, arXiv, and original publication URLs.
-
-6. **Section E — Research Brief Workspace (`artemis.ui.views.briefs`)**:
-   - Dynamic faculty and paper selectors with preselection sync.
-   - Grounded brief synthesis using configured LLM provider (Mock or Gemini API).
-   - Prominent `[Abstract-Based Brief]` badge and alignment confidence score.
-   - Structured sections for Research Problem, Methodology, Key Contribution, Textual Limitations, Matched Student Evidence (with verified skills/project tags), Skill Gaps, and Suggested Discussion Questions.
-   - One-click "Generate Outreach Draft" button redirecting directly to Draft Review.
-
-7. **Section F — Outreach Draft Review (`artemis.ui.views.drafts`)**:
-   - Recipient header with target faculty, institution, and deliverability status badge.
-   - Editable Subject Line and Body (`st.text_area`).
-   - **Live Automated Quality Control Card**:
-     - Word count verification ($\le 300$ words, optimal 120-220).
-     - Anti-hallucination scanner flagging prohibited phrases (e.g. *"as we discussed"*, *"per our conversation"*, *"saw your job posting"*, *"in your lecture"*).
-     - Template placeholder detection (`[Insert Project]`).
-     - Recipient email deliverability and placeholder alerts (`@example.com`).
-     - Target paper grounding check.
-   - Action buttons: "Save Edits to Database" (calling `repo.update_draft`), "Mark as Reviewed", and clipboard helper.
-   - Mandatory safety notice: A.R.T.E.M.I.S. creates review drafts only and never sends emails automatically.
-
-8. **Section G — Settings & System Status (`artemis.ui.views.settings`)**:
-   - Active SQLite database path switcher and table record counts.
-   - Active LLM provider diagnostics (Mock vs Gemini API with masked keys).
-   - Crawler HTTP User-Agent and politeness rate limits.
-   - Git commit hash, Python version, and operational instructions.
+1. **Optional Google OAuth 2.0 Gmail Draft Sync**:
+   - Connect to Gmail API using minimal OAuth scope (`https://www.googleapis.com/auth/gmail.compose`).
+   - Create Gmail drafts directly in the student's draft folder without ever requesting sending permissions (`gmail.send` strictly excluded).
+2. **Headless Browser Crawler Engine**:
+   - Optional fallback using Playwright/Selenium for client-side SPAs that block static HTML extraction.
+3. **Application Report Exporters**:
+   - Export research briefs and faculty portfolios to PDF or Markdown dossiers for internship application tracking.
+4. **Cross-Institute Search Aggregator**:
+   - Batch scouting across multiple pre-configured IIT/NIT directories matching a unified set of research keywords.
 
 ---
 
-### 8.2 Test Verification & Quality Assurance
+## 10. Verification Artifacts & Test Evidence
 
-All 118 unit and integration tests pass cleanly in under 1.5 seconds:
-
-```powershell
-.\.venv\Scripts\pytest -v
-```
-
-```text
-============================= test session starts =============================
-platform win32 -- Python 3.10.9, pytest-9.1.1, pluggy-1.7.0
-rootdir: C:\Users\PIYUSH\Desktop\ARTEMIS
-configfile: pyproject.toml
-testpaths: tests
-plugins: anyio-4.15.1
-collected 119 items
-
-tests/test_brief_synthesizer.py (4 passed)
-tests/test_cli.py (6 passed)
-tests/test_crawler.py (9 passed)
-tests/test_email_generator.py (4 passed)
-tests/test_llm.py (11 passed)
-tests/test_milestone3_service_and_cli.py (5 passed)
-tests/test_models.py (22 passed)
-tests/test_repository.py (27 passed)
-tests/test_resume.py (8 passed)
-tests/test_scouting.py (11 passed)
-tests/test_service.py (1 passed)
-tests/test_smoke_real_web.py (1 skipped - live web)
-tests/test_ui.py (10 passed)
-
-======================= 118 passed, 1 skipped in 1.32s ========================
-```
-
----
-
-### 8.3 How to Launch the Web Application
-
-```powershell
-.\.venv\Scripts\streamlit run app.py
-```
-
-Open `http://localhost:8501` in your browser. All data operations persist locally to `artemis.db`.
-
+- **Commit**: `d48e93a` (`feat(ui): implement Milestone 4 Research Intelligence Dashboard with Streamlit`)
+- **Pytest Output**: 118 passed, 1 skipped in 1.30s.
+- **Repository Branch**: `main` (clean working tree).
+- **Primary Entrypoints**:
+  - Web UI: `app.py` (`streamlit run app.py`)
+  - CLI: `src/artemis/cli.py` (`artemis --help`)
+  - Service: `src/artemis/service.py` (`ArtemisScoutingService`)
